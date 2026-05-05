@@ -3,7 +3,7 @@ import {
   Wallet, TrendingUp, TrendingDown, Calendar as CalendarIcon, Upload, Download,
   Plus, Trash2, Edit2, X, Check, ChevronLeft, ChevronRight, FileText, Image as ImageIcon,
   Tags, RefreshCw, Receipt, AlertCircle, Search, Home, BarChart3, Clock, FolderOpen,
-  CheckCircle2, Circle, Settings, Eye, EyeOff, Building2, User as UserIcon, Pencil, Cloud
+  CheckCircle2, Circle, Settings, Eye, EyeOff, Building2, User as UserIcon, Pencil, Cloud, Paperclip
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis,
@@ -352,6 +352,63 @@ const parseTransactionsFromText = (text, categories = []) => {
 };
 
 // ============================================================
+// PIÈCES JOINTES (factures / justificatifs)
+// ============================================================
+
+// Compresse une image en base64 dataURL :
+//   - réduit à max 1200px de large (préserve le ratio)
+//   - convertit en JPEG qualité 75% (sauf PDF, gardé tel quel)
+// Renvoie un objet : { dataUrl, mimeType, sizeBytes, originalName }
+const compressImageFile = (file, maxWidth = 1200, quality = 0.75) => new Promise((resolve, reject) => {
+  if (file.type === 'application/pdf') {
+    // Les PDF sont stockés tels quels (pas de compression possible côté client sans lib lourde)
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      dataUrl: reader.result,
+      mimeType: 'application/pdf',
+      sizeBytes: file.size,
+      originalName: file.name,
+    });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+    return;
+  }
+  if (!file.type.startsWith('image/')) {
+    reject(new Error('Format non supporté (image ou PDF uniquement).'));
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const ratio = img.width > maxWidth ? maxWidth / img.width : 1;
+      const w = Math.round(img.width * ratio);
+      const h = Math.round(img.height * ratio);
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', quality);
+      // Estimation de la taille : longueur base64 * 0.75
+      const sizeBytes = Math.round((dataUrl.length - 'data:image/jpeg;base64,'.length) * 0.75);
+      resolve({ dataUrl, mimeType: 'image/jpeg', sizeBytes, originalName: file.name });
+    };
+    img.onerror = () => reject(new Error('Image illisible.'));
+    img.src = reader.result;
+  };
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
+
+const formatFileSize = (bytes) => {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + ' o';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' ko';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' Mo';
+};
+
+// ============================================================
 // COMPOSANTS UI ATOMIQUES
 // ============================================================
 
@@ -464,6 +521,172 @@ const ProgressBar = ({ value, max = 100 }) => (
     />
   </div>
 );
+
+// ============================================================
+// PIÈCE JOINTE — sélecteur + viewer
+// ============================================================
+
+// Affiche une miniature et permet de visualiser/supprimer la pièce jointe.
+// Si pas de pièce jointe, affiche un bouton "Ajouter une facture".
+// Le justificatif est de la forme : { dataUrl, mimeType, sizeBytes, originalName }
+const JustificatifPicker = ({ value, onChange, label = "Facture / Justificatif" }) => {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    setError('');
+    try {
+      // Limite la taille brute à 10 Mo en entrée
+      if (file.size > 10 * 1024 * 1024) {
+        throw new Error('Fichier trop volumineux (max 10 Mo).');
+      }
+      const compressed = await compressImageFile(file);
+      onChange(compressed);
+    } catch (err) {
+      setError(err.message || 'Erreur de traitement du fichier.');
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  return (
+    <div>
+      <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">{label}</label>
+      {value ? (
+        <div className="flex items-center gap-3 p-3 bg-stone-50 border border-stone-200 rounded-xl">
+          {value.mimeType && value.mimeType.startsWith('image/') ? (
+            <img
+              src={value.dataUrl}
+              alt="Aperçu"
+              className="w-12 h-12 object-cover rounded-lg cursor-pointer hover:opacity-80 transition border border-stone-200"
+              onClick={() => setViewerOpen(true)}
+            />
+          ) : (
+            <div
+              className="w-12 h-12 rounded-lg bg-stone-200 flex items-center justify-center cursor-pointer hover:bg-stone-300 transition"
+              onClick={() => setViewerOpen(true)}
+            >
+              <FileText size={20} className="text-stone-600" />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-stone-900 truncate">
+              {value.originalName || 'Pièce jointe'}
+            </p>
+            <p className="text-xs text-stone-500">
+              {value.mimeType === 'application/pdf' ? 'PDF' : 'Image'} · {formatFileSize(value.sizeBytes)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setViewerOpen(true)}
+            className="p-1.5 rounded-lg text-stone-600 hover:bg-stone-200 transition"
+            title="Voir"
+          >
+            <Eye size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            className="p-1.5 rounded-lg text-stone-600 hover:bg-rose-100 hover:text-rose-700 transition"
+            title="Retirer"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={busy}
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 border-2 border-dashed border-stone-300 rounded-xl text-sm text-stone-600 hover:border-stone-500 hover:bg-stone-50 transition disabled:opacity-50"
+          >
+            {busy ? (
+              <><RefreshCw size={14} className="animate-spin" /> Traitement…</>
+            ) : (
+              <><Paperclip size={14} /> Ajouter une facture (photo ou PDF)</>
+            )}
+          </button>
+          <p className="text-xs text-stone-400 mt-1.5">
+            Image (JPG, PNG, HEIC) ou PDF · max 10 Mo · les images sont compressées automatiquement
+          </p>
+        </>
+      )}
+      {error && (
+        <p className="text-xs text-rose-700 mt-1.5">{error}</p>
+      )}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*,application/pdf"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => handleFile(e.target.files[0])}
+      />
+      <JustificatifViewer
+        open={viewerOpen}
+        onClose={() => setViewerOpen(false)}
+        justificatif={value}
+      />
+    </div>
+  );
+};
+
+// Affiche le justificatif en grand. Pour les PDF, propose juste un bouton ouvrir/télécharger.
+const JustificatifViewer = ({ open, onClose, justificatif }) => {
+  if (!open || !justificatif) return null;
+  const isImage = justificatif.mimeType && justificatif.mimeType.startsWith('image/');
+  const handleDownload = () => {
+    const a = document.createElement('a');
+    a.href = justificatif.dataUrl;
+    a.download = justificatif.originalName || 'facture';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-stone-900/80 backdrop-blur-md" onClick={onClose}>
+      <div className="relative max-w-5xl max-h-[90vh] w-full" onClick={(e) => e.stopPropagation()}>
+        <div className="absolute -top-12 right-0 flex gap-2">
+          <button
+            onClick={handleDownload}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 backdrop-blur text-white hover:bg-white/20 transition text-sm"
+          >
+            <Download size={14} /> Télécharger
+          </button>
+          <button
+            onClick={onClose}
+            className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-white/10 backdrop-blur text-white hover:bg-white/20 transition"
+            title="Fermer"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        {isImage ? (
+          <img
+            src={justificatif.dataUrl}
+            alt="Justificatif"
+            className="max-w-full max-h-[90vh] mx-auto rounded-xl shadow-2xl"
+          />
+        ) : (
+          <div className="bg-white rounded-xl shadow-2xl overflow-hidden h-[85vh]">
+            <iframe
+              src={justificatif.dataUrl}
+              title="Justificatif PDF"
+              className="w-full h-full"
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 // ============================================================
 // FORMULAIRE TRANSACTION
@@ -651,6 +874,11 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate })
           )}
         </div>
       )}
+
+      <JustificatifPicker
+        value={tx.justificatif}
+        onChange={(v) => setTx({ ...tx, justificatif: v })}
+      />
 
       <div>
         <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Notes (optionnel)</label>
@@ -1453,6 +1681,7 @@ const TimeViews = ({ transactions, categories }) => {
 const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) => {
   const [cursor, setCursor] = useState(startOfMonth(new Date()));
   const [selectedDay, setSelectedDay] = useState(null);
+  const [viewingJustif, setViewingJustif] = useState(null);
 
   // Toutes les transactions du jour (revenus + dépenses, remboursées comprises)
   const monthName = cursor.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
@@ -1637,6 +1866,15 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-stone-900 truncate">{t.libelle}</p>
+                        {t.justificatif && (
+                          <button
+                            onClick={() => setViewingJustif(t.justificatif)}
+                            className="text-stone-500 hover:text-stone-900 transition shrink-0"
+                            title="Voir la facture jointe"
+                          >
+                            <Paperclip size={12} />
+                          </button>
+                        )}
                         {t.remboursable && (
                           <span className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded ${
                             t.rembourse ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
@@ -1674,6 +1912,12 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
           </div>
         )}
       </Modal>
+
+      <JustificatifViewer
+        open={!!viewingJustif}
+        onClose={() => setViewingJustif(null)}
+        justificatif={viewingJustif}
+      />
     </Card>
   );
 };
@@ -1692,6 +1936,8 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
 
   const getCatColor = (id) => categories.find(c => c.id === id)?.color || '#9c9c9c';
   const getCatName = (id) => categories.find(c => c.id === id)?.name || 'Inconnue';
+
+  const [viewingJustif, setViewingJustif] = useState(null);
 
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [invoice, setInvoice] = useState({
@@ -1924,6 +2170,17 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
     <span>Document généré automatiquement</span>
     <span>Page 1</span>
   </div>
+
+  ${selectedTxs.filter(t => t.justificatif && t.justificatif.mimeType && t.justificatif.mimeType.startsWith('image/')).map((t, idx) => `
+    <div style="page-break-before: always; padding-top: 16px;">
+      <div style="border-bottom: 1px solid #e7e5e4; padding-bottom: 12px; margin-bottom: 16px;">
+        <p style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#78716c;margin:0 0 4px;">Annexe — Justificatif n°${idx + 1}</p>
+        <p style="margin:0;font-weight:600;">${escapeHtml(t.libelle)}</p>
+        <p style="margin:2px 0 0;font-size:12px;color:#57534e;">${escapeHtml(formatDateFR(t.date))} · ${formatEUR(Math.abs(t.montant))}</p>
+      </div>
+      <img src="${t.justificatif.dataUrl}" alt="Justificatif" style="max-width:100%;max-height:80vh;display:block;margin:0 auto;border:1px solid #e7e5e4;" />
+    </div>
+  `).join('')}
 </body>
 </html>`;
 
@@ -2037,7 +2294,18 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
                   <Circle size={20} />
                 </button>
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-stone-900 truncate">{t.libelle}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-medium text-stone-900 truncate">{t.libelle}</p>
+                    {t.justificatif && (
+                      <button
+                        onClick={() => setViewingJustif(t.justificatif)}
+                        className="text-stone-500 hover:text-stone-900 transition shrink-0"
+                        title="Voir la facture jointe"
+                      >
+                        <Paperclip size={12} />
+                      </button>
+                    )}
+                  </div>
                   <p className="text-xs text-stone-500">{formatDateFR(t.date)}</p>
                 </div>
                 <CatBadges ids={getCatIds(t)} categories={categories} max={2} />
@@ -2060,7 +2328,18 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
                   <CheckCircle2 size={20} />
                 </button>
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-stone-900 truncate line-through">{t.libelle}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-medium text-stone-900 truncate line-through">{t.libelle}</p>
+                    {t.justificatif && (
+                      <button
+                        onClick={() => setViewingJustif(t.justificatif)}
+                        className="text-stone-500 hover:text-stone-900 transition shrink-0"
+                        title="Voir la facture jointe"
+                      >
+                        <Paperclip size={12} />
+                      </button>
+                    )}
+                  </div>
                   <p className="text-xs text-stone-500">{formatDateFR(t.date)}</p>
                 </div>
                 <CatBadges ids={getCatIds(t)} categories={categories} max={2} />
@@ -2174,9 +2453,19 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
               <p className="text-xs uppercase tracking-wider text-stone-400">Total facturé</p>
               <p className="font-serif text-2xl mt-0.5">{formatEUR(invoiceTotal)}</p>
             </div>
-            <p className="text-sm text-stone-400">
-              {selectedTxs.length} dépense{selectedTxs.length > 1 ? 's' : ''}
-            </p>
+            <div className="text-right">
+              <p className="text-sm text-stone-400">
+                {selectedTxs.length} dépense{selectedTxs.length > 1 ? 's' : ''}
+              </p>
+              {(() => {
+                const withJustif = selectedTxs.filter(t => t.justificatif && t.justificatif.mimeType?.startsWith('image/')).length;
+                return withJustif > 0 ? (
+                  <p className="text-xs text-stone-500 mt-0.5 inline-flex items-center gap-1">
+                    <Paperclip size={11} /> {withJustif} facture{withJustif > 1 ? 's' : ''} en annexe
+                  </p>
+                ) : null;
+              })()}
+            </div>
           </div>
 
           <div className="flex gap-2">
@@ -2187,6 +2476,12 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
           </div>
         </div>
       </Modal>
+
+      <JustificatifViewer
+        open={!!viewingJustif}
+        onClose={() => setViewingJustif(null)}
+        justificatif={viewingJustif}
+      />
     </div>
   );
 };
@@ -2208,10 +2503,13 @@ const CategoryAnalytics = ({ transactions, categories }) => {
     return null;
   }, [period]);
 
+  // Note : le filtrage des remboursables (selon les boutons société/proximité de
+  // l'en-tête) est déjà appliqué en amont via passReimbFilter dans App.
+  // On ne refiltre PAS ici : ainsi, quand l'utilisateur affiche "tout" (vert),
+  // les dépenses remboursées sont bien comptées dans les statistiques.
   const filtered = useMemo(() => transactions.filter(t => {
     if (tab !== 'all' && t.type !== tab) return false;
     if (periodFilter && new Date(t.date) < periodFilter) return false;
-    if (t.type === 'dépense' && t.remboursable && t.rembourse) return false;
     return true;
   }), [transactions, tab, periodFilter]);
 
@@ -2612,6 +2910,7 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState('all');
   const [filterType, setFilterType] = useState('all');
+  const [viewingJustif, setViewingJustif] = useState(null);
 
   const getCatColor = (id) => categories.find(c => c.id === id)?.color || '#9c9c9c';
   const getCatName = (id) => categories.find(c => c.id === id)?.name || 'Inconnue';
@@ -2658,6 +2957,15 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="font-medium text-stone-900 truncate">{t.libelle}</p>
+                  {t.justificatif && (
+                    <button
+                      onClick={() => setViewingJustif(t.justificatif)}
+                      className="inline-flex items-center gap-0.5 text-stone-500 hover:text-stone-900 transition shrink-0"
+                      title="Voir la facture jointe"
+                    >
+                      <Paperclip size={12} />
+                    </button>
+                  )}
                   {t.remboursable && (
                     <span className={`text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded
                       ${t.rembourse ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
@@ -2685,6 +2993,11 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
           ))}
         </div>
       )}
+      <JustificatifViewer
+        open={!!viewingJustif}
+        onClose={() => setViewingJustif(null)}
+        justificatif={viewingJustif}
+      />
     </Card>
   );
 };
@@ -2754,37 +3067,63 @@ const Dashboard = ({ transactions, categories, allTransactions }) => {
 
   return (
     <div className="space-y-4">
-      {/* Hero */}
+      {/* Hero — Solde du mois en grand, avec Revenus / Dépenses détaillés */}
       <Card className="p-6 bg-gradient-to-br from-stone-900 to-stone-800 text-stone-50 border-stone-900">
-        <div className="flex items-start justify-between">
-          <div>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex-1 min-w-[200px]">
             <p className="text-xs uppercase tracking-[0.2em] text-stone-400">Solde du mois · {monthLabel}</p>
-            <p className="font-serif text-5xl mt-2">{formatEUR(balance)}</p>
+            <p className={`font-serif text-5xl mt-2 tabular-nums ${balance >= 0 ? 'text-stone-50' : 'text-rose-300'}`}>
+              {balance >= 0 ? '+' : '−'}{formatEUR(Math.abs(balance))}
+            </p>
             <p className="text-sm text-stone-400 mt-2">
-              {revenue > 0 ? `${formatEUR(revenue)} de revenus · ` : ''}{formatEUR(netExpenses)} de dépenses nettes
+              {revenue > 0 ? formatEUR(revenue) + ' de revenus · ' : ''}{formatEUR(netExpenses)} de dépenses nettes
             </p>
           </div>
-          <Wallet size={32} className="text-stone-700" />
+          {/* Mini-récap dans le hero */}
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+            <div className="text-right">
+              <p className="text-[10px] uppercase tracking-wider text-stone-400">Revenus</p>
+              <p className="font-serif text-xl text-emerald-300 tabular-nums">{formatEUR(revenue)}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] uppercase tracking-wider text-stone-400">Dépenses</p>
+              <p className="font-serif text-xl text-stone-50 tabular-nums">{formatEUR(grossExpenses)}</p>
+            </div>
+          </div>
         </div>
       </Card>
 
-      {/* KPIs */}
+      {/* KPIs : 4 indicateurs synthétiques, organisés du plus important au moins */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card className="p-4">
-          <p className="text-xs uppercase tracking-wider text-stone-500">Dépenses nettes</p>
-          <p className="font-serif text-2xl text-stone-900 mt-1">{formatEUR(netExpenses)}</p>
+          <p className="text-xs uppercase tracking-wider text-emerald-700">Revenus</p>
+          <p className="font-serif text-2xl text-emerald-700 mt-1 tabular-nums">{formatEUR(revenue)}</p>
+          <p className="text-xs text-stone-500 mt-1">{thisMonth.filter(t => t.type === 'revenu').length} entrée{thisMonth.filter(t => t.type === 'revenu').length > 1 ? 's' : ''}</p>
         </Card>
         <Card className="p-4">
-          <p className="text-xs uppercase tracking-wider text-stone-500">Dépenses brutes</p>
-          <p className="font-serif text-2xl text-stone-900 mt-1">{formatEUR(grossExpenses)}</p>
+          <p className="text-xs uppercase tracking-wider text-stone-500">Dépenses</p>
+          <p className="font-serif text-2xl text-stone-900 mt-1 tabular-nums">{formatEUR(grossExpenses)}</p>
+          <p className="text-xs text-stone-500 mt-1">
+            {grossExpenses !== netExpenses ? (
+              <>dont {formatEUR(grossExpenses - netExpenses)} remboursable</>
+            ) : (
+              <>{thisMonth.filter(t => t.type === 'dépense').length} sortie{thisMonth.filter(t => t.type === 'dépense').length > 1 ? 's' : ''}</>
+            )}
+          </p>
         </Card>
         <Card className="p-4">
-          <p className="text-xs uppercase tracking-wider text-stone-500">Revenus</p>
-          <p className="font-serif text-2xl text-emerald-700 mt-1">{formatEUR(revenue)}</p>
+          <p className="text-xs uppercase tracking-wider text-stone-500">Solde du mois</p>
+          <p className={`font-serif text-2xl mt-1 tabular-nums ${balance >= 0 ? 'text-stone-900' : 'text-rose-700'}`}>
+            {balance >= 0 ? '+' : '−'}{formatEUR(Math.abs(balance))}
+          </p>
+          <p className="text-xs text-stone-500 mt-1">
+            {revenue > 0 ? `Épargne : ${((balance / revenue) * 100).toFixed(0)}%` : 'Hors revenus'}
+          </p>
         </Card>
         <Card className="p-4 bg-amber-50/40 border-amber-100">
           <p className="text-xs uppercase tracking-wider text-amber-800">À recevoir</p>
-          <p className="font-serif text-2xl text-stone-900 mt-1">{formatEUR(pendingReimb)}</p>
+          <p className="font-serif text-2xl text-stone-900 mt-1 tabular-nums">{formatEUR(pendingReimb)}</p>
+          <p className="text-xs text-stone-500 mt-1">Remboursements en attente</p>
         </Card>
       </div>
 
@@ -3039,6 +3378,9 @@ export default function App() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [showSociete, setShowSociete] = useState('hide');
   const [showProximite, setShowProximite] = useState('hide');
+  // Transaction pré-remplie depuis les paramètres d'URL (?action=add&montant=...&libelle=...)
+  // Sert à l'automatisation iOS via Raccourcis : on ouvre l'URL, le formulaire s'ouvre déjà rempli.
+  const [prefillTx, setPrefillTx] = useState(null);
   const importJsonRef = useRef(null);
 
   // ===== State Gist =====
@@ -3085,6 +3427,78 @@ export default function App() {
     window.addEventListener('reassign-cat', handler);
     return () => window.removeEventListener('reassign-cat', handler);
   }, []);
+
+  // ===== Lecture des paramètres URL au démarrage =====
+  // Permet l'automatisation iOS via Raccourcis Apple : un raccourci peut ouvrir
+  // l'app avec une URL du type :
+  //   https://lulabs23.github.io/finance/?action=add&montant=12.50&libelle=CARREFOUR&type=depense
+  // Paramètres reconnus :
+  //   action      : "add" pour ouvrir le formulaire d'ajout (seule valeur supportée pour l'instant)
+  //   montant     : nombre (point ou virgule décimale)
+  //   libelle     : texte libre (URL-encoded)
+  //   date        : YYYY-MM-DD (sinon date du jour)
+  //   type        : "revenu" ou "depense" (défaut "depense")
+  //   categorie   : id de catégorie (cat_alim, cat_courses, ...) — optionnel
+  //   remboursable: "1" pour cocher remboursable (uniquement si type=depense)
+  //   notes       : texte libre (URL-encoded)
+  // Une fois lu, on nettoie l'URL pour éviter de recréer la transaction au refresh.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get('action');
+    if (action !== 'add') return;
+
+    const rawMontant = params.get('montant') || '';
+    const montant = rawMontant.replace(',', '.').trim();
+    const libelle = (params.get('libelle') || '').trim();
+    const dateParam = (params.get('date') || '').trim();
+    const typeParam = (params.get('type') || 'depense').toLowerCase();
+    const categorieParam = (params.get('categorie') || '').trim();
+    const remboursableParam = params.get('remboursable') === '1';
+    const notesParam = (params.get('notes') || '').trim();
+
+    const type = typeParam === 'revenu' ? 'revenu' : 'dépense';
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : toISODate(new Date());
+
+    // Choix de la catégorie :
+    // - si categorieParam fourni et valide → on l'utilise
+    // - sinon : revenu → cat_revenu ; dépense → cat_autre (ou première dispo)
+    let categorieIds = [];
+    if (categorieParam && DEFAULT_CATEGORIES.find(c => c.id === categorieParam)) {
+      categorieIds = [categorieParam];
+    } else if (type === 'revenu') {
+      categorieIds = ['cat_revenu'];
+    } else {
+      categorieIds = ['cat_autre'];
+    }
+
+    const prefill = {
+      id: uuid(),
+      date,
+      libelle: libelle || '',
+      // Pour le formulaire, montant reste une string pour l'édition libre
+      montant: montant || '',
+      type,
+      categorieIds,
+      remboursable: remboursableParam && type === 'dépense',
+      remboursableType: 'societe',
+      rembourse: false,
+      justificatif: null,
+      notes: notesParam,
+    };
+
+    setPrefillTx(prefill);
+    setEditingTx(null);
+    setDefaultDate(null);
+    setShowTxForm(true);
+
+    // Nettoyer l'URL pour ne pas re-déclencher au refresh
+    try {
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, '', cleanUrl);
+    } catch {}
+  }, []);
+
 
   // ===== Chargement initial depuis le gist au démarrage =====
   useEffect(() => {
