@@ -195,6 +195,11 @@ const getCatIds = (tx) => {
 
 const primaryCatId = (tx) => getCatIds(tx)[0] || null;
 
+// Indique si un revenu est considéré comme déjà reçu sur le compte.
+// Rétro-compatibilité : si le champ est absent, on considère le revenu comme reçu
+// (comportement historique avant l'introduction du champ).
+const isRevenuRecu = (tx) => tx.type !== 'revenu' || tx.recu !== false;
+
 // ============================================================
 // HOOKS UTILITAIRES
 // ============================================================
@@ -709,6 +714,10 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate })
       remboursable: false,
       remboursableType: 'societe', // 'societe' | 'proximite'
       rembourse: false,
+      // Pour les revenus : true = revenu déjà reçu sur le compte ;
+      // false = revenu programmé / attendu mais pas encore crédité.
+      // Pour les dépenses : non utilisé (toujours considéré comme effectif).
+      recu: true,
       justificatif: null,
       notes: '',
     };
@@ -871,6 +880,25 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate })
                 <span className="text-sm text-stone-600">Déjà remboursée</span>
               </label>
             </div>
+          )}
+        </div>
+      )}
+
+      {tx.type === 'revenu' && (
+        <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-3">
+          <label className="flex items-center gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={tx.recu !== false}
+              onChange={(e) => setTx({ ...tx, recu: e.target.checked })}
+              className="w-4 h-4 rounded border-stone-300 text-emerald-700 focus:ring-emerald-700/20"
+            />
+            <span className="text-sm text-stone-700">Revenu déjà reçu sur le compte</span>
+          </label>
+          {tx.recu === false && (
+            <p className="text-xs text-stone-500 mt-2 ml-6">
+              Le revenu sera marqué « En attente ». Tu pourras le valider plus tard quand il sera crédité.
+            </p>
           )}
         </div>
       )}
@@ -1883,6 +1911,11 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
                             {t.rembourse ? 'Remb.' : 'En attente'}
                           </span>
                         )}
+                        {t.type === 'revenu' && t.recu === false && (
+                          <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                            <Clock size={9} /> En attente
+                          </span>
+                        )}
                       </div>
                       <CatBadges ids={getCatIds(t)} categories={categories} max={3} />
                     </div>
@@ -1940,6 +1973,8 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
   const [viewingJustif, setViewingJustif] = useState(null);
 
   const [invoiceOpen, setInvoiceOpen] = useState(false);
+  // Filtre d'affichage dans le modal facture : "pending" (en attente, défaut) | "paid" (déjà remboursées) | "all" (toutes)
+  const [invoiceFilter, setInvoiceFilter] = useState('pending');
   const [invoice, setInvoice] = useState({
     emetteurNom: '',
     emetteurAdresse: '',
@@ -1951,17 +1986,48 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
     selectedIds: pending.map(t => t.id),
   });
 
-  // Resynchronise la sélection si pending change
+  // À chaque ouverture du modal, on resélectionne par défaut les transactions
+  // correspondant au filtre courant (et on retire les ids qui ne sont plus remboursables).
   useEffect(() => {
     setInvoice(inv => ({
       ...inv,
-      selectedIds: inv.selectedIds.filter(id => pending.some(p => p.id === id)),
+      selectedIds: inv.selectedIds.filter(id => reimbursables.some(r => r.id === id)),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending.length]);
+  }, [reimbursables.length]);
 
-  const selectedTxs = pending.filter(t => invoice.selectedIds.includes(t.id));
+  // Liste affichée dans le modal selon le filtre actif
+  const displayedReimb = invoiceFilter === 'pending' ? pending
+    : invoiceFilter === 'paid' ? completed
+    : reimbursables;
+
+  // Les transactions sélectionnées peuvent être en attente OU remboursées
+  const selectedTxs = reimbursables.filter(t => invoice.selectedIds.includes(t.id));
   const invoiceTotal = selectedTxs.reduce((s, t) => s + Math.abs(t.montant), 0);
+
+  // Détecte si la sélection mélange en attente et remboursées (info utile pour adapter le titre)
+  const selectedHasPending = selectedTxs.some(t => !t.rembourse);
+  const selectedHasPaid = selectedTxs.some(t => t.rembourse);
+
+  // Adapte automatiquement l'objet par défaut selon ce qu'on inclut.
+  // On ne le fait qu'à la première ouverture pour ne pas écraser ce que l'utilisateur a tapé.
+  const adaptedObjet = (() => {
+    if (selectedHasPaid && !selectedHasPending) return 'Récapitulatif des dépenses remboursées';
+    if (selectedHasPending && !selectedHasPaid) return 'Note de frais à rembourser';
+    if (selectedHasPending && selectedHasPaid) return 'Récapitulatif des dépenses remboursables';
+    return invoice.objet;
+  })();
+
+  const openInvoice = () => {
+    // À l'ouverture, on présélectionne les en attente (cas d'usage dominant)
+    setInvoice(inv => ({
+      ...inv,
+      selectedIds: pending.map(t => t.id),
+      objet: pending.length > 0 ? 'Note de frais à rembourser' : 'Récapitulatif des dépenses remboursées',
+    }));
+    setInvoiceFilter('pending');
+    setInvoiceOpen(true);
+  };
 
   const generateInvoice = () => {
     if (selectedTxs.length === 0) return;
@@ -2121,13 +2187,13 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
 
   <div class="header">
     <div>
-      <h1>Note de frais</h1>
+      <h1>${selectedHasPaid && !selectedHasPending ? 'Récapitulatif' : 'Note de frais'}</h1>
       <div style="color:#78716c;font-size:13px;">${escapeHtml(invoice.objet)}</div>
     </div>
     <div class="meta">
       <strong>${escapeHtml(invoice.numero)}</strong>
       Émise le ${today}<br>
-      ${selectedTxs.length} dépense${selectedTxs.length > 1 ? 's' : ''}
+      ${selectedTxs.length} dépense${selectedTxs.length > 1 ? 's' : ''}${selectedHasPaid && selectedHasPending ? ' · mixte' : selectedHasPaid && !selectedHasPending ? ' · déjà remboursées' : ''}
     </div>
   </div>
 
@@ -2155,7 +2221,7 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
     <tbody>
       ${rows}
       <tr class="total-row">
-        <td colspan="4">Total à rembourser</td>
+        <td colspan="4">${selectedHasPaid && !selectedHasPending ? 'Total remboursé' : selectedHasPending && selectedHasPaid ? 'Total (à rembourser + déjà remboursé)' : 'Total à rembourser'}</td>
         <td>${formatEUR(invoiceTotal)}</td>
       </tr>
     </tbody>
@@ -2163,7 +2229,7 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
 
   <div class="signature">
     <div class="signature-block">Date et signature de l'émetteur</div>
-    <div class="signature-block">Date et signature pour accord de remboursement</div>
+    <div class="signature-block">${selectedHasPaid && !selectedHasPending ? 'Document de classement / archivage' : 'Date et signature pour accord de remboursement'}</div>
   </div>
 
   <div class="footer">
@@ -2278,8 +2344,8 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
       <Card className="p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-serif text-lg text-stone-900">En attente de remboursement</h3>
-          {pending.length > 0 && (
-            <Button size="sm" onClick={() => setInvoiceOpen(true)}>
+          {reimbursables.length > 0 && (
+            <Button size="sm" onClick={openInvoice}>
               <FileText size={14} /> Générer une facture
             </Button>
           )}
@@ -2353,13 +2419,14 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
       <Modal
         open={invoiceOpen}
         onClose={() => setInvoiceOpen(false)}
-        title="Générer une facture / note de frais"
+        title="Générer un document de remboursement"
         size="lg"
       >
         <div className="space-y-5">
           <p className="text-sm text-stone-600">
-            Composez la note de frais à partir de vos dépenses remboursables non remboursées.
-            Le document s'ouvrira dans une nouvelle fenêtre, prêt à imprimer ou enregistrer en PDF.
+            Choisis les dépenses remboursables à inclure (en attente, déjà remboursées, ou les deux).
+            Le document s'adapte automatiquement : <strong>note de frais</strong> pour les en attente,
+            <strong> récapitulatif d'archivage</strong> pour les déjà remboursées.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -2413,10 +2480,10 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
               <p className="text-xs uppercase tracking-wider text-stone-500">Dépenses à inclure</p>
               <div className="flex gap-1">
-                <Button size="sm" variant="ghost" onClick={() => setInvoice({ ...invoice, selectedIds: pending.map(t => t.id) })}>
+                <Button size="sm" variant="ghost" onClick={() => setInvoice({ ...invoice, selectedIds: displayedReimb.map(t => t.id) })}>
                   Tout cocher
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setInvoice({ ...invoice, selectedIds: [] })}>
@@ -2424,10 +2491,38 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
                 </Button>
               </div>
             </div>
+
+            {/* Filtre : en attente / remboursées / toutes */}
+            <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl mb-2 w-fit">
+              {[
+                { id: 'pending', label: 'En attente', count: pending.length },
+                { id: 'paid', label: 'Remboursées', count: completed.length },
+                { id: 'all', label: 'Toutes', count: reimbursables.length },
+              ].map(f => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setInvoiceFilter(f.id)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                    invoiceFilter === f.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                >
+                  {f.label}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                    invoiceFilter === f.id ? 'bg-stone-100 text-stone-700' : 'bg-white text-stone-500'
+                  }`}>{f.count}</span>
+                </button>
+              ))}
+            </div>
+
             <div className="max-h-64 overflow-y-auto border border-stone-200 rounded-xl divide-y divide-stone-100">
-              {pending.length === 0 ? (
-                <p className="text-stone-500 text-sm p-4 text-center">Aucune dépense en attente à inclure.</p>
-              ) : pending.map(t => {
+              {displayedReimb.length === 0 ? (
+                <p className="text-stone-500 text-sm p-4 text-center">
+                  {invoiceFilter === 'pending' && 'Aucune dépense en attente.'}
+                  {invoiceFilter === 'paid' && 'Aucune dépense déjà remboursée.'}
+                  {invoiceFilter === 'all' && 'Aucune dépense remboursable.'}
+                </p>
+              ) : displayedReimb.map(t => {
                 const checked = invoice.selectedIds.includes(t.id);
                 return (
                   <label key={t.id} className="flex items-center gap-3 p-3 hover:bg-stone-50 cursor-pointer">
@@ -2438,7 +2533,21 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
                       className="w-4 h-4 rounded border-stone-300"
                     />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-stone-900 truncate">{t.libelle}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm font-medium text-stone-900 truncate">{t.libelle}</p>
+                        {t.rembourse ? (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] uppercase tracking-wider font-medium px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 shrink-0">
+                            <CheckCircle2 size={8} /> Reçu
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] uppercase tracking-wider font-medium px-1 py-0.5 rounded bg-amber-100 text-amber-700 shrink-0">
+                            <Clock size={8} /> Attente
+                          </span>
+                        )}
+                        {t.justificatif && (
+                          <Paperclip size={10} className="text-stone-400 shrink-0" />
+                        )}
+                      </div>
                       <p className="text-xs text-stone-500">{formatDateFR(t.date)}</p>
                     </div>
                     <p className="font-serif text-base text-stone-900 tabular-nums">{formatEUR(Math.abs(t.montant))}</p>
@@ -2972,6 +3081,11 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
                       {t.rembourse ? 'Remboursé' : 'Remb. en attente'}
                     </span>
                   )}
+                  {t.type === 'revenu' && t.recu === false && (
+                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                      <Clock size={9} /> En attente
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-stone-500">{formatDateFR(t.date)}</p>
               </div>
@@ -3068,7 +3182,7 @@ const Dashboard = ({ transactions, categories, allTransactions }) => {
   return (
     <div className="space-y-4">
       {/* Hero — Solde du mois en grand, avec Revenus / Dépenses détaillés */}
-      <Card className="p-6 bg-gradient-to-br from-stone-900 to-stone-800 text-stone-50 border-stone-900">
+      <Card className="dashboard-hero p-6 bg-gradient-to-br from-stone-900 to-stone-800 text-stone-50 border-stone-900">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex-1 min-w-[200px]">
             <p className="text-xs uppercase tracking-[0.2em] text-stone-400">Solde du mois · {monthLabel}</p>
@@ -3098,7 +3212,22 @@ const Dashboard = ({ transactions, categories, allTransactions }) => {
         <Card className="p-4">
           <p className="text-xs uppercase tracking-wider text-emerald-700">Revenus</p>
           <p className="font-serif text-2xl text-emerald-700 mt-1 tabular-nums">{formatEUR(revenue)}</p>
-          <p className="text-xs text-stone-500 mt-1">{thisMonth.filter(t => t.type === 'revenu').length} entrée{thisMonth.filter(t => t.type === 'revenu').length > 1 ? 's' : ''}</p>
+          <p className="text-xs text-stone-500 mt-1">
+            {(() => {
+              const revs = thisMonth.filter(t => t.type === 'revenu');
+              const pendingRevs = revs.filter(t => t.recu === false);
+              if (pendingRevs.length === 0) {
+                return <>{revs.length} entrée{revs.length > 1 ? 's' : ''}</>;
+              }
+              const pendingTotal = pendingRevs.reduce((s, t) => s + Math.abs(t.montant), 0);
+              return (
+                <span className="inline-flex items-center gap-1">
+                  <Clock size={11} className="text-amber-700" />
+                  <span className="text-amber-800 font-medium">{formatEUR(pendingTotal)} en attente</span>
+                </span>
+              );
+            })()}
+          </p>
         </Card>
         <Card className="p-4">
           <p className="text-xs uppercase tracking-wider text-stone-500">Dépenses</p>
@@ -3179,7 +3308,15 @@ const Dashboard = ({ transactions, categories, allTransactions }) => {
 // MODALE PARAMÈTRES
 // ============================================================
 
-const SettingsModal = ({ open, onClose, gistToken, gistId, gistUser, isConnected, syncStatus, syncError, lastSyncAt, onConnect, onDisconnect, onForceSync }) => {
+const SettingsModal = ({
+  open, onClose,
+  gistToken, gistId, gistUser, isConnected, syncStatus, syncError, lastSyncAt, onConnect, onDisconnect, onForceSync,
+  // Nouvelles props : préférences d'affichage et import/export
+  themePref, onThemeChange,
+  isMobileTouch,
+  onExport, onImportClick,
+  txCount, catCount,
+}) => {
   const [tokenInput, setTokenInput] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -3215,8 +3352,70 @@ const SettingsModal = ({ open, onClose, gistToken, gistId, gistUser, isConnected
 
   return (
     <Modal open={open} onClose={onClose} title="Paramètres" size="md">
-      <div className="space-y-5">
-        {/* Section : Synchronisation Gist */}
+      <div className="space-y-6">
+
+        {/* ============================================================
+            Section : Apparence (thème + mode tactile)
+            ============================================================ */}
+        <section>
+          <div className="flex items-center gap-2 mb-3">
+            <Eye size={16} className="text-stone-700" />
+            <h4 className="font-medium text-stone-900">Apparence</h4>
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Thème</label>
+              <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
+                {[
+                  { id: 'auto', label: 'Auto' },
+                  { id: 'light', label: 'Clair' },
+                  { id: 'dark', label: 'Sombre' },
+                ].map(t => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => onThemeChange(t.id)}
+                    className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition border ${
+                      themePref === t.id
+                        ? 'bg-white text-stone-900 border-stone-300 shadow-sm'
+                        : 'bg-transparent border-transparent text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-stone-500 mt-1.5">
+                <strong>Auto</strong> suit les préférences de ton système (jour/nuit selon l'heure ou l'OS).
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 p-3 bg-stone-50 rounded-xl">
+              {isMobileTouch ? (
+                <>
+                  <CheckCircle2 size={14} className="text-emerald-700 shrink-0" />
+                  <p className="text-xs text-stone-700">
+                    <strong>Mode tactile actif</strong> — boutons agrandis, modales en plein écran, hover désactivé. Détecté automatiquement (mobile ou tablette).
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Circle size={14} className="text-stone-400 shrink-0" />
+                  <p className="text-xs text-stone-600">
+                    Mode tactile inactif (souris détectée). L'app passe automatiquement en mode tactile sur écran ≤ 768 px ou sur appareil tactile.
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <div className="border-t border-stone-200" />
+
+        {/* ============================================================
+            Section : Synchronisation Gist
+            ============================================================ */}
         <section>
           <div className="flex items-center gap-2 mb-3">
             <Cloud size={16} className="text-stone-700" />
@@ -3339,6 +3538,41 @@ const SettingsModal = ({ open, onClose, gistToken, gistId, gistUser, isConnected
             </div>
           )}
         </section>
+
+        <div className="border-t border-stone-200" />
+
+        {/* ============================================================
+            Section : Données (import / export local)
+            ============================================================ */}
+        <section>
+          <div className="flex items-center gap-2 mb-3">
+            <FolderOpen size={16} className="text-stone-700" />
+            <h4 className="font-medium text-stone-900">Données</h4>
+          </div>
+
+          <p className="text-sm text-stone-600 mb-3">
+            Sauvegarde et restauration locales (fichier JSON). Indépendant de la synchronisation Gist.
+            Pratique pour faire une copie ponctuelle ou migrer vers un autre appareil.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+            <Button variant="outline" size="sm" onClick={onExport}>
+              <Download size={14} /> Exporter mes données
+            </Button>
+            <Button variant="outline" size="sm" onClick={onImportClick}>
+              <FolderOpen size={14} /> Importer mes données
+            </Button>
+          </div>
+
+          <div className="bg-stone-50 rounded-xl p-3 text-xs text-stone-600">
+            <p>
+              <strong>Contenu actuel :</strong> {txCount} transaction{txCount > 1 ? 's' : ''} · {catCount} catégorie{catCount > 1 ? 's' : ''}
+            </p>
+            <p className="mt-1 text-stone-500">
+              L'import remplace les données actuelles. Pense à exporter avant si tu veux une sauvegarde.
+            </p>
+          </div>
+        </section>
       </div>
     </Modal>
   );
@@ -3381,6 +3615,76 @@ export default function App() {
   // Transaction pré-remplie depuis les paramètres d'URL (?action=add&montant=...&libelle=...)
   // Sert à l'automatisation iOS via Raccourcis : on ouvre l'URL, le formulaire s'ouvre déjà rempli.
   const [prefillTx, setPrefillTx] = useState(null);
+
+  // ===== Préférences d'affichage (thème + densité tactile) =====
+  // themePref : 'auto' (suit le système) | 'light' | 'dark'
+  const [themePref, setThemePref] = useState(() => readLS('finances_theme', 'auto'));
+  // Détection de l'environnement mobile/tactile : on combine la largeur d'écran (≤768px)
+  // et la présence d'un pointeur tactile principal. Cela garantit le mode tactile sur iPhone
+  // ET sur tablette tactile en orientation étroite.
+  const [isMobileTouch, setIsMobileTouch] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const narrow = window.innerWidth <= 768;
+    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    return narrow || coarse;
+  });
+
+  // Recalcule isMobileTouch au resize / changement de pointeur (rotation tablette par ex.)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const update = () => {
+      const narrow = window.innerWidth <= 768;
+      const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      setIsMobileTouch(narrow || coarse);
+    };
+    window.addEventListener('resize', update);
+    const mq = window.matchMedia('(pointer: coarse)');
+    if (mq.addEventListener) mq.addEventListener('change', update);
+    else if (mq.addListener) mq.addListener(update);
+    return () => {
+      window.removeEventListener('resize', update);
+      if (mq.removeEventListener) mq.removeEventListener('change', update);
+      else if (mq.removeListener) mq.removeListener(update);
+    };
+  }, []);
+
+  // Application effective du thème (auto résolu vers light/dark selon le système)
+  // et propagation dans la classe HTML pour activer les overrides CSS.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const applyTheme = () => {
+      let effective = themePref;
+      if (themePref === 'auto') {
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        effective = prefersDark ? 'dark' : 'light';
+      }
+      const html = document.documentElement;
+      if (effective === 'dark') html.classList.add('dark');
+      else html.classList.remove('dark');
+      // On positionne aussi le data-attribute pour le mode tactile (utilisé par les overrides CSS)
+      if (isMobileTouch) html.setAttribute('data-touch', '1');
+      else html.removeAttribute('data-touch');
+    };
+    applyTheme();
+    // Si on est en 'auto', on écoute aussi les changements système
+    if (themePref === 'auto' && window.matchMedia) {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      const listener = () => applyTheme();
+      if (mq.addEventListener) mq.addEventListener('change', listener);
+      else if (mq.addListener) mq.addListener(listener);
+      return () => {
+        if (mq.removeEventListener) mq.removeEventListener('change', listener);
+        else if (mq.removeListener) mq.removeListener(listener);
+      };
+    }
+  }, [themePref, isMobileTouch]);
+
+  // Persistance du choix de thème
+  useEffect(() => {
+    writeLS('finances_theme', themePref);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themePref]);
+
   const importJsonRef = useRef(null);
 
   // ===== State Gist =====
@@ -3727,11 +4031,158 @@ export default function App() {
   ];
 
   return (
-    <div className="min-h-screen bg-stone-50 text-stone-900" style={{ fontFamily: '"Inter", system-ui, sans-serif' }}>
+    <div className="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100" style={{ fontFamily: '"Inter", system-ui, sans-serif' }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap');
         .font-serif { font-family: 'Fraunces', Georgia, serif; font-optical-sizing: auto; }
         body, html { font-family: 'Inter', system-ui, sans-serif; }
+
+        /* ============================================================
+           THÈME SOMBRE — overrides ciblés des classes Tailwind utilisées
+           Plutôt que de réécrire chaque composant avec dark:, on inverse
+           les couleurs neutres globalement quand .dark est sur <html>.
+           ============================================================ */
+
+        html.dark { color-scheme: dark; }
+
+        /* Backgrounds neutres */
+        html.dark .bg-stone-50 { background-color: #1c1917 !important; }
+        html.dark .bg-white { background-color: #292524 !important; }
+        html.dark .bg-stone-100 { background-color: #292524 !important; }
+        html.dark .bg-stone-200 { background-color: #44403c !important; }
+        html.dark .bg-stone-900 { background-color: #f5f5f4 !important; }
+        html.dark .bg-stone-50\\/80 { background-color: rgba(28, 25, 23, 0.8) !important; }
+        html.dark .bg-stone-50\\/40 { background-color: rgba(28, 25, 23, 0.4) !important; }
+        html.dark .bg-white\\/40 { background-color: rgba(41, 37, 36, 0.4) !important; }
+
+        /* Textes */
+        html.dark .text-stone-900 { color: #fafaf9 !important; }
+        html.dark .text-stone-700 { color: #e7e5e4 !important; }
+        html.dark .text-stone-600 { color: #d6d3d1 !important; }
+        html.dark .text-stone-500 { color: #a8a29e !important; }
+        html.dark .text-stone-400 { color: #78716c !important; }
+        html.dark .text-stone-50 { color: #1c1917 !important; }
+
+        /* Bordures */
+        html.dark .border-stone-100 { border-color: #292524 !important; }
+        html.dark .border-stone-200 { border-color: #44403c !important; }
+        html.dark .border-stone-200\\/80 { border-color: rgba(68, 64, 60, 0.8) !important; }
+        html.dark .border-stone-300 { border-color: #57534e !important; }
+        html.dark .border-stone-900 { border-color: #f5f5f4 !important; }
+
+        /* Bouton principal (stone-900) inversé */
+        html.dark .bg-stone-900.text-stone-50 { background-color: #fafaf9 !important; color: #1c1917 !important; }
+        html.dark .hover\\:bg-stone-800:hover { background-color: #e7e5e4 !important; }
+        html.dark .hover\\:bg-stone-100:hover { background-color: #292524 !important; }
+        html.dark .hover\\:bg-stone-200:hover { background-color: #44403c !important; }
+        html.dark .hover\\:bg-stone-50:hover { background-color: #1c1917 !important; }
+        html.dark .hover\\:bg-white:hover { background-color: #292524 !important; }
+
+        /* Inputs/selects : focus ring */
+        html.dark input, html.dark select, html.dark textarea { color-scheme: dark; }
+
+        /* Hero du dashboard : déjà sombre, mais on adoucit pour ne pas devenir noir profond */
+        html.dark .from-stone-900 { --tw-gradient-from: #292524 var(--tw-gradient-from-position) !important; }
+        html.dark .to-stone-800 { --tw-gradient-to: #1c1917 var(--tw-gradient-to-position) !important; }
+
+        /* Couleurs accent (emerald/amber/rose) : on garde, juste atténué */
+        html.dark .bg-emerald-50 { background-color: rgba(6, 78, 59, 0.3) !important; }
+        html.dark .bg-emerald-50\\/40 { background-color: rgba(6, 78, 59, 0.2) !important; }
+        html.dark .border-emerald-100 { border-color: #065f46 !important; }
+        html.dark .text-emerald-700 { color: #6ee7b7 !important; }
+        html.dark .text-emerald-800 { color: #a7f3d0 !important; }
+        html.dark .bg-emerald-100 { background-color: rgba(6, 78, 59, 0.4) !important; }
+
+        html.dark .bg-amber-50 { background-color: rgba(120, 53, 15, 0.3) !important; }
+        html.dark .bg-amber-50\\/40 { background-color: rgba(120, 53, 15, 0.2) !important; }
+        html.dark .bg-amber-50\\/50 { background-color: rgba(120, 53, 15, 0.25) !important; }
+        html.dark .bg-amber-50\\/60 { background-color: rgba(120, 53, 15, 0.3) !important; }
+        html.dark .border-amber-100 { border-color: #78350f !important; }
+        html.dark .border-amber-200\\/70 { border-color: rgba(180, 83, 9, 0.5) !important; }
+        html.dark .text-amber-700 { color: #fcd34d !important; }
+        html.dark .text-amber-800 { color: #fde68a !important; }
+        html.dark .bg-amber-100 { background-color: rgba(120, 53, 15, 0.4) !important; }
+
+        html.dark .bg-rose-50 { background-color: rgba(127, 29, 29, 0.3) !important; }
+        html.dark .border-rose-100 { border-color: #7f1d1d !important; }
+        html.dark .text-rose-700 { color: #fca5a5 !important; }
+        html.dark .text-rose-600 { color: #fca5a5 !important; }
+        html.dark .hover\\:bg-rose-100:hover { background-color: rgba(127, 29, 29, 0.5) !important; }
+
+        /* Modale : overlay légèrement plus opaque */
+        html.dark .bg-stone-900\\/40 { background-color: rgba(0, 0, 0, 0.6) !important; }
+
+        /* ============================================================
+           HERO DU DASHBOARD — Forcer les couleurs en mode sombre
+           Le hero a un fond sombre dans les deux modes (déjà foncé en clair,
+           juste un peu plus doux en sombre). Il faut donc préserver les
+           textes clairs (stone-50/stone-400) qui seraient sinon inversés.
+           ============================================================ */
+        html.dark .dashboard-hero { background: linear-gradient(to bottom right, #292524, #1c1917) !important; color: #fafaf9 !important; border-color: #44403c !important; }
+        html.dark .dashboard-hero .text-stone-50 { color: #fafaf9 !important; }
+        html.dark .dashboard-hero .text-stone-400 { color: #a8a29e !important; }
+        html.dark .dashboard-hero .text-emerald-300 { color: #6ee7b7 !important; }
+        html.dark .dashboard-hero .text-rose-300 { color: #fda4af !important; }
+
+        /* ============================================================
+           MODE TACTILE — adaptations pour iPhone et tablettes tactiles
+           Activé par data-touch="1" sur <html> via JS.
+           Objectifs : zones de tap plus grandes, suppression des hover,
+           sticky bottom bar pour les actions principales sur mobile.
+           ============================================================ */
+
+        html[data-touch="1"] {
+          /* Désactive complètement les hover : sur tactile, ils s'appliquent
+             au dernier tap et restent collés, donnant une UI bizarre. */
+          --hover-disabled: 1;
+        }
+        html[data-touch="1"] *:hover { transition: none !important; }
+
+        /* Zone de tap minimum 44px (recommandation Apple HIG) */
+        html[data-touch="1"] button:not(.no-touch-grow),
+        html[data-touch="1"] a[role="button"]:not(.no-touch-grow) {
+          min-height: 40px;
+        }
+
+        /* Inputs plus confortables au doigt */
+        html[data-touch="1"] input[type="text"],
+        html[data-touch="1"] input[type="number"],
+        html[data-touch="1"] input[type="email"],
+        html[data-touch="1"] input[type="password"],
+        html[data-touch="1"] input[type="date"],
+        html[data-touch="1"] select,
+        html[data-touch="1"] textarea {
+          font-size: 16px !important; /* évite le zoom auto iOS */
+          padding-top: 0.625rem !important;
+          padding-bottom: 0.625rem !important;
+        }
+
+        /* Modales : occupent toute la hauteur disponible sur petit écran,
+           avec safe area iOS en bas (encoche) */
+        html[data-touch="1"] .fixed.inset-0.z-50 > div {
+          margin: 0 !important;
+          max-height: 100vh !important;
+          height: 100vh !important;
+          border-radius: 0 !important;
+          padding-bottom: env(safe-area-inset-bottom, 0) !important;
+        }
+
+        /* Boutons d'action visibles sur l'écran principal : actions toujours
+           accessibles même sans scroller. Les boutons "+", "Importer" etc. */
+        html[data-touch="1"] .group:hover .group-hover\\:opacity-100 {
+          opacity: 1 !important;
+        }
+        html[data-touch="1"] .opacity-0.group-hover\\:opacity-100 {
+          opacity: 0.7 !important;
+        }
+
+        /* Cartes du dashboard : un peu plus de respiration sur mobile */
+        html[data-touch="1"] .gap-3 { gap: 0.625rem !important; }
+
+        /* Calendrier : cellules plus grandes au doigt */
+        html[data-touch="1"] .grid.grid-cols-7 button {
+          min-height: 64px !important;
+        }
       `}</style>
 
       {/* Header */}
@@ -3892,42 +4343,38 @@ export default function App() {
         {view === 'reimb' && <ReimbursableView transactions={transactions} categories={categories} onUpdate={updateTransaction} />}
       </main>
 
-      {/* Footer : import/export */}
-      <footer className="border-t border-stone-200/60 bg-white/40 mt-8">
-        <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-stone-500">
-            {transactions.length} transaction{transactions.length > 1 ? 's' : ''} · {categories.length} catégorie{categories.length > 1 ? 's' : ''}
-          </p>
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={exportData}>
-              <Download size={14} /> Exporter mes données
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => importJsonRef.current?.click()}>
-              <FolderOpen size={14} /> Importer mes données
-            </Button>
-            <input
-              ref={importJsonRef}
-              type="file"
-              accept="application/json"
-              className="hidden"
-              onChange={(e) => { if (e.target.files[0]) importData(e.target.files[0]); e.target.value = ''; }}
-            />
-          </div>
-        </div>
-      </footer>
+      {/* Input file invisible : déclenché par le bouton "Importer" dans la modale Paramètres */}
+      <input
+        ref={importJsonRef}
+        type="file"
+        accept="application/json"
+        className="hidden"
+        onChange={(e) => { if (e.target.files[0]) importData(e.target.files[0]); e.target.value = ''; }}
+      />
 
       {/* Modale formulaire transaction */}
       <Modal
         open={showTxForm}
-        onClose={() => { setShowTxForm(false); setEditingTx(null); setDefaultDate(null); }}
-        title={editingTx ? 'Modifier la transaction' : 'Nouvelle transaction'}
+        onClose={() => { setShowTxForm(false); setEditingTx(null); setDefaultDate(null); setPrefillTx(null); }}
+        title={editingTx ? 'Modifier la transaction' : (prefillTx ? 'Nouvelle transaction (pré-remplie)' : 'Nouvelle transaction')}
       >
         <TransactionForm
-          initial={editingTx}
+          initial={editingTx || prefillTx}
           categories={categories}
           defaultDate={defaultDate}
-          onSave={addTransaction}
-          onCancel={() => { setShowTxForm(false); setEditingTx(null); setDefaultDate(null); }}
+          onSave={(tx) => {
+            // Si on est en mode pré-remplissage URL, l'objet "initial" qu'on a passé
+            // a un id qu'on garde, mais ce n'est pas une édition existante : on ajoute.
+            if (prefillTx && !editingTx) {
+              setTransactions(prev => [...prev, tx]);
+              setShowTxForm(false);
+              setPrefillTx(null);
+              setDefaultDate(null);
+            } else {
+              addTransaction(tx);
+            }
+          }}
+          onCancel={() => { setShowTxForm(false); setEditingTx(null); setDefaultDate(null); setPrefillTx(null); }}
         />
       </Modal>
 
@@ -3963,6 +4410,13 @@ export default function App() {
         onConnect={connectGist}
         onDisconnect={disconnectGist}
         onForceSync={forceSyncFromGist}
+        themePref={themePref}
+        onThemeChange={setThemePref}
+        isMobileTouch={isMobileTouch}
+        onExport={exportData}
+        onImportClick={() => importJsonRef.current?.click()}
+        txCount={transactions.length}
+        catCount={categories.length}
       />
 
       {/* Modale import OCR */}
