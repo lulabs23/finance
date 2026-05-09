@@ -4089,6 +4089,12 @@ export default function App() {
 
         /* Bouton principal (stone-900) inversé */
         html.dark .bg-stone-900.text-stone-50 { background-color: #fafaf9 !important; color: #1c1917 !important; }
+        /* Boutons d'état sélectionné avec text-white explicite (Dépense, Société, Proximité) :
+           bg-stone-900 devient blanc en mode sombre, donc on force le texte à devenir sombre. */
+        html.dark .bg-stone-900.text-white { background-color: #fafaf9 !important; color: #1c1917 !important; }
+        /* Bouton Revenu sélectionné : bg-emerald-700 + text-white. On adoucit l'emerald
+           et on garde le texte blanc qui contraste bien sur ce fond plus sombre. */
+        html.dark .bg-emerald-700.text-white { background-color: #047857 !important; color: #f0fdf4 !important; }
         html.dark .hover\\:bg-stone-800:hover { background-color: #e7e5e4 !important; }
         html.dark .hover\\:bg-stone-100:hover { background-color: #292524 !important; }
         html.dark .hover\\:bg-stone-200:hover { background-color: #44403c !important; }
