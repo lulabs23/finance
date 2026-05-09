@@ -1740,18 +1740,6 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
     return arr;
   }, [cursor, transactions]);
 
-  // Intensité basée sur le total absolu (dépenses + revenus) pour la coloration de fond
-  const maxDayActivity = Math.max(...days.filter(Boolean).map(d => d.depenses), 1);
-
-  const intensity = (val) => {
-    if (val === 0) return null;
-    const pct = val / maxDayActivity;
-    if (pct < 0.25) return 'bg-stone-100 text-stone-700';
-    if (pct < 0.5) return 'bg-stone-300 text-stone-800';
-    if (pct < 0.75) return 'bg-stone-600 text-white';
-    return 'bg-stone-900 text-white';
-  };
-
   const getCatColor = (id) => categories.find(c => c.id === id)?.color || '#9c9c9c';
 
   const monthRevenus = days.filter(Boolean).reduce((s, d) => s + d.revenus, 0);
@@ -1798,12 +1786,10 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
 
       <div className="grid grid-cols-7 gap-1.5">
         {days.map((d, idx) => {
-          if (!d) return <div key={idx} className="aspect-square" />;
+          if (!d) return <div key={idx} className="min-h-[56px] md:aspect-square md:min-h-0" />;
           const isToday = toISODate(new Date()) === d.iso;
-          const cls = intensity(d.depenses);
-          const isDark = cls && cls.includes('text-white');
 
-          // Couleurs catégories distinctes pour le jour
+          // Couleurs catégories distinctes pour le jour (utilisées pour les pastilles si plusieurs tx)
           const catColors = [];
           d.txs.forEach(tx => {
             getCatIds(tx).forEach(id => {
@@ -1816,24 +1802,23 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
             <button
               key={d.iso}
               onClick={() => setSelectedDay(d)}
-              className={`aspect-square min-h-[72px] rounded-xl p-1.5 flex flex-col items-stretch justify-between transition relative text-left overflow-hidden
-                ${cls || 'bg-stone-50 text-stone-600 hover:bg-stone-100'}
+              className={`min-h-[56px] md:aspect-square md:min-h-0 rounded-xl p-1.5 flex flex-col items-stretch justify-between transition relative text-left overflow-hidden bg-stone-50 text-stone-700 hover:bg-stone-100
                 ${isToday ? 'ring-2 ring-stone-900 ring-offset-1' : ''}
               `}
             >
               <div className="flex items-start justify-between">
-                <span className={`text-xs font-medium ${isDark ? 'opacity-90' : ''}`}>
+                <span className="text-xs font-medium">
                   {d.date.getDate()}
                 </span>
                 {d.count > 0 && (
-                  <span className={`text-[9px] font-medium px-1 rounded ${isDark ? 'bg-white/20' : 'bg-stone-200/70 text-stone-700'}`}>
+                  <span className="text-[9px] font-medium px-1 rounded bg-stone-200/70 text-stone-700">
                     {d.count}
                   </span>
                 )}
               </div>
 
               {d.txs.length === 1 && (
-                <div className={`text-[9px] leading-tight truncate ${isDark ? 'opacity-80' : 'text-stone-600'}`} title={d.txs[0].libelle}>
+                <div className="text-[9px] leading-tight truncate text-stone-600" title={d.txs[0].libelle}>
                   {d.txs[0].libelle}
                 </div>
               )}
@@ -1849,12 +1834,12 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
               {(d.revenus > 0 || d.depenses > 0) && (
                 <div className="flex flex-col gap-0">
                   {d.revenus > 0 && (
-                    <span className={`text-[10px] font-medium tabular-nums leading-tight ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>
+                    <span className="text-[10px] font-medium tabular-nums leading-tight text-emerald-700">
                       +{Math.round(d.revenus)}€
                     </span>
                   )}
                   {d.depenses > 0 && (
-                    <span className={`text-[10px] font-medium tabular-nums leading-tight ${isDark ? '' : 'text-stone-700'}`}>
+                    <span className="text-[10px] font-medium tabular-nums leading-tight text-stone-700">
                       −{Math.round(d.depenses)}€
                     </span>
                   )}
@@ -2599,10 +2584,7 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
 // ANALYSE PAR CATÉGORIE
 // ============================================================
 
-const CategoryAnalytics = ({ transactions, categories }) => {
-  const [tab, setTab] = useState('all'); // all | dépense | revenu
-  const [period, setPeriod] = useState('all'); // all | month | quarter | year
-
+const CategoryAnalytics = ({ transactions, categories, tab, period }) => {
   // Période active
   const periodFilter = useMemo(() => {
     const now = new Date();
@@ -2660,45 +2642,6 @@ const CategoryAnalytics = ({ transactions, categories }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
-          {[
-            { id: 'all', label: 'Tout' },
-            { id: 'dépense', label: 'Dépenses' },
-            { id: 'revenu', label: 'Revenus' },
-          ].map(t => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${
-                tab === t.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl ml-auto">
-          {[
-            { id: 'all', label: 'Tout l\'historique' },
-            { id: 'year', label: '12 mois' },
-            { id: 'quarter', label: '3 mois' },
-            { id: 'month', label: 'Ce mois' },
-          ].map(p => (
-            <button
-              key={p.id}
-              onClick={() => setPeriod(p.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                period === p.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <Card className="p-4">
           <p className="text-xs uppercase tracking-wider text-stone-500">Total dépenses</p>
@@ -2825,27 +2768,80 @@ const CategoryAnalytics = ({ transactions, categories }) => {
 
 const CategoriesPage = ({ transactions, allTransactions, categories, onCategoriesChange }) => {
   const [tab, setTab] = useState('stats'); // stats | manage
+  const [filterType, setFilterType] = useState('all'); // all | dépense | revenu
+  const [period, setPeriod] = useState('all'); // all | month | quarter | year
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl w-fit">
-        <button
-          onClick={() => setTab('stats')}
-          className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition ${
-            tab === 'stats' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
-          }`}
-        >
-          <BarChart3 size={14} /> Analyse
-        </button>
-        <button
-          onClick={() => setTab('manage')}
-          className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition ${
-            tab === 'manage' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
-          }`}
-        >
-          <Settings size={14} /> Gérer
-        </button>
+      {/* Ligne 1 : Analyse/Gérer (icônes seules) + Tout/Dépenses/Revenus (visible quand stats actif) */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
+          <button
+            onClick={() => setTab('stats')}
+            title="Analyse"
+            aria-label="Analyse"
+            className={`inline-flex items-center justify-center w-9 h-8 rounded-lg transition ${
+              tab === 'stats' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            <BarChart3 size={15} />
+          </button>
+          <button
+            onClick={() => setTab('manage')}
+            title="Gérer"
+            aria-label="Gérer"
+            className={`inline-flex items-center justify-center w-9 h-8 rounded-lg transition ${
+              tab === 'manage' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            <Settings size={15} />
+          </button>
+        </div>
+
+        {tab === 'stats' && (
+          <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
+            {[
+              { id: 'all', label: 'Tout' },
+              { id: 'dépense', label: 'Dépenses' },
+              { id: 'revenu', label: 'Revenus' },
+            ].map(t => (
+              <button
+                key={t.id}
+                onClick={() => setFilterType(t.id)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                  filterType === t.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-      {tab === 'stats' && <CategoryAnalytics transactions={transactions} categories={categories} />}
+
+      {/* Ligne 2 : sélecteur de temporalité, pleine largeur (uniquement si stats actif) */}
+      {tab === 'stats' && (
+        <div className="flex items-stretch w-full bg-stone-100 p-1 rounded-xl">
+          {[
+            { id: 'all', label: 'Tout l\'historique' },
+            { id: 'year', label: '12 mois' },
+            { id: 'quarter', label: '3 mois' },
+            { id: 'month', label: 'Ce mois' },
+          ].map(p => (
+            <button
+              key={p.id}
+              onClick={() => setPeriod(p.id)}
+              className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                period === p.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab === 'stats' && <CategoryAnalytics transactions={transactions} categories={categories} tab={filterType} period={period} />}
       {tab === 'manage' && <CategoriesView categories={categories} transactions={allTransactions} onCategoriesChange={onCategoriesChange} />}
     </div>
   );
@@ -3035,23 +3031,23 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
 
   return (
     <Card className="p-5">
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        <h3 className="font-serif text-lg text-stone-900 mr-auto">Toutes les transactions</h3>
-        <div className="relative">
+      <h3 className="font-serif text-lg text-stone-900 mb-3">Toutes les transactions</h3>
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Rechercher…"
-            className="pl-9 w-56"
+            className="pl-9 w-full"
           />
         </div>
-        <Select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-36">
+        <Select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="flex-1 min-w-[120px] md:flex-none md:w-36">
           <option value="all">Tous types</option>
           <option value="dépense">Dépenses</option>
           <option value="revenu">Revenus</option>
         </Select>
-        <Select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="w-44">
+        <Select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="flex-1 min-w-[140px] md:flex-none md:w-44">
           <option value="all">Toutes catégories</option>
           {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
@@ -3064,7 +3060,7 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
           {filtered.map(t => (
             <div key={t.id} className="group flex items-center gap-3 p-3 bg-stone-50 rounded-xl hover:bg-stone-100 transition">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <p className="font-medium text-stone-900 truncate">{t.libelle}</p>
                   {t.justificatif && (
                     <button
@@ -3076,26 +3072,48 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
                     </button>
                   )}
                   {t.remboursable && (
-                    <span className={`text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded
+                    <span className={`text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded shrink-0
                       ${t.rembourse ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {t.rembourse ? 'Remboursé' : 'Remb. en attente'}
+                      {t.rembourse ? 'Remb.' : 'En att.'}
                     </span>
                   )}
                   {t.type === 'revenu' && t.recu === false && (
-                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
-                      <Clock size={9} /> En attente
+                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 shrink-0">
+                      <Clock size={9} /> Attente
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-stone-500">{formatDateFR(t.date)}</p>
+                {/* Métadonnées en dessous : date · catégorie(s) avec pastilles colorées */}
+                <div className="flex items-center gap-2 text-xs text-stone-500 mt-0.5 flex-wrap">
+                  <span>{formatDateFR(t.date)}</span>
+                  {getCatIds(t).length > 0 && (
+                    <>
+                      <span className="text-stone-300">·</span>
+                      <span className="inline-flex items-center gap-1 truncate">
+                        {getCatIds(t).slice(0, 2).map(id => {
+                          const cat = categories.find(c => c.id === id);
+                          if (!cat) return null;
+                          return (
+                            <span key={id} className="inline-flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                              <span>{cat.name}</span>
+                            </span>
+                          );
+                        })}
+                        {getCatIds(t).length > 2 && (
+                          <span className="text-stone-400">+{getCatIds(t).length - 2}</span>
+                        )}
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
-              <CatBadges ids={getCatIds(t)} categories={categories} max={2} />
-              <p className={`font-serif text-lg tabular-nums w-32 text-right ${
+              <p className={`font-serif text-base md:text-lg tabular-nums shrink-0 text-right ${
                 t.type === 'revenu' ? 'text-emerald-700' : 'text-stone-900'
               }`}>
                 {t.type === 'revenu' ? '+' : '−'} {formatEUR(Math.abs(t.montant))}
               </p>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition">
+              <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition shrink-0">
                 <Button size="sm" variant="ghost" onClick={() => onEdit(t)}>
                   <Edit2 size={14} />
                 </Button>
@@ -3609,7 +3627,6 @@ export default function App() {
   const [editingTx, setEditingTx] = useState(null);
   const [defaultDate, setDefaultDate] = useState(null);
   const [showImport, setShowImport] = useState(false);
-  const [showWelcome, setShowWelcome] = useState(true);
   const [showSociete, setShowSociete] = useState('hide');
   const [showProximite, setShowProximite] = useState('hide');
   // Transaction pré-remplie depuis les paramètres d'URL (?action=add&montant=...&libelle=...)
@@ -4179,10 +4196,8 @@ export default function App() {
         /* Cartes du dashboard : un peu plus de respiration sur mobile */
         html[data-touch="1"] .gap-3 { gap: 0.625rem !important; }
 
-        /* Calendrier : cellules plus grandes au doigt */
-        html[data-touch="1"] .grid.grid-cols-7 button {
-          min-height: 64px !important;
-        }
+        /* Calendrier : la hauteur des cellules est gérée par les classes Tailwind
+           (min-h-[72px] partout, md:aspect-square sur desktop pour des cases carrées). */
       `}</style>
 
       {/* Header */}
@@ -4292,46 +4307,29 @@ export default function App() {
           </div>
         </div>
 
-        {/* Nav mobile */}
-        <nav className="md:hidden flex items-center gap-1 px-4 pb-2 overflow-x-auto">
+        {/* Nav mobile : icônes seules, mieux réparties */}
+        <nav className="md:hidden flex items-center justify-around gap-1 px-2 pb-2">
           {navItems.map(item => {
             const Icon = item.icon;
+            const isActive = view === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => setView(item.id)}
-                className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
-                  view === item.id
+                title={item.label}
+                aria-label={item.label}
+                className={`flex-1 flex items-center justify-center py-2.5 rounded-lg transition ${
+                  isActive
                     ? 'bg-stone-900 text-stone-50'
                     : 'text-stone-600 hover:bg-stone-100'
                 }`}
               >
-                <Icon size={12} />
-                {item.label}
+                <Icon size={18} strokeWidth={isActive ? 2.2 : 1.8} />
               </button>
             );
           })}
         </nav>
       </header>
-
-      {/* Welcome */}
-      {showWelcome && transactions.length === 0 && (
-        <div className="max-w-7xl mx-auto px-4 md:px-6 mt-4">
-          <div className="bg-amber-50/60 border border-amber-200/70 rounded-2xl p-4 flex items-start gap-3">
-            <AlertCircle className="text-amber-700 mt-0.5 shrink-0" size={18} />
-            <div className="flex-1">
-              <p className="text-sm text-stone-800">
-                <strong>Bienvenue !</strong> Cette application stocke vos données uniquement en mémoire,
-                elles seront perdues à la fermeture de l'onglet. Pensez à <strong>exporter régulièrement</strong>
-                {' '}vos données via le bouton <FolderOpen size={12} className="inline -mt-0.5" /> en bas de page.
-              </p>
-            </div>
-            <button onClick={() => setShowWelcome(false)} className="text-stone-500 hover:text-stone-900">
-              <X size={18} />
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Contenu */}
       <main className="max-w-7xl mx-auto px-4 md:px-6 py-6">
