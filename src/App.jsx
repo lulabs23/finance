@@ -3331,6 +3331,7 @@ const SettingsModal = ({
   gistToken, gistId, gistUser, isConnected, syncStatus, syncError, lastSyncAt, onConnect, onDisconnect, onForceSync,
   // Nouvelles props : préférences d'affichage et import/export
   themePref, onThemeChange,
+  bgEnabled, onBgToggle,
   isMobileTouch,
   onExport, onImportClick,
   txCount, catCount,
@@ -3407,6 +3408,29 @@ const SettingsModal = ({
               <p className="text-xs text-stone-500 mt-1.5">
                 <strong>Auto</strong> suit les préférences de ton système (jour/nuit selon l'heure ou l'OS).
               </p>
+            </div>
+
+            {/* Toggle background animé */}
+            <div>
+              <label className="flex items-center justify-between gap-3 cursor-pointer p-3 bg-stone-50 rounded-xl hover:bg-stone-100 transition">
+                <div>
+                  <p className="text-sm font-medium text-stone-900">Background animé</p>
+                  <p className="text-xs text-stone-500 mt-0.5">Vague de particules derrière l'app</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onBgToggle}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                    bgEnabled ? 'bg-stone-900' : 'bg-stone-300'
+                  }`}
+                  role="switch"
+                  aria-checked={bgEnabled}
+                >
+                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                    bgEnabled ? 'translate-x-6' : 'translate-x-1'
+                  }`} />
+                </button>
+              </label>
             </div>
 
             <div className="flex items-center gap-2 p-3 bg-stone-50 rounded-xl">
@@ -3597,6 +3621,85 @@ const SettingsModal = ({
 };
 
 // ============================================================
+// BACKGROUND ANIMÉ — Vague de particules
+// Points minuscules qui ondulent comme du sable/fumée.
+// S'adapte au thème clair/sombre.
+// ============================================================
+
+const ParticleWaveBackground = ({ isDark }) => {
+  const canvasRef = useRef(null);
+  const animRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
+    const particleColor = isDark
+      ? (a) => `rgba(168,162,158,${a})`
+      : (a) => `rgba(120,113,108,${a})`;
+    const bgColor = isDark ? '#1c1917' : '#fafaf9';
+
+    const COUNT = Math.min(350, Math.round(window.innerWidth * window.innerHeight / 5000));
+    const pts = Array.from({ length: COUNT }, () => ({
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      phase: Math.random() * Math.PI * 2,
+      speed: 0.008 + Math.random() * 0.012,
+      ampX: 6 + Math.random() * 10,
+      ampY: 4 + Math.random() * 7,
+      r: 0.8 + Math.random() * 1.4,
+    }));
+    pts.forEach(p => { p.ox = p.x; p.oy = p.y; });
+
+    let t = 0;
+    const draw = () => {
+      if (document.hidden) { animRef.current = requestAnimationFrame(draw); return; }
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      for (const p of pts) {
+        p.x = p.ox + Math.sin(t * p.speed + p.phase) * p.ampX;
+        p.y = p.oy + Math.cos(t * p.speed * 0.7 + p.phase) * p.ampY;
+        const brightness = 0.15 + Math.sin(t * p.speed + p.phase) * 0.15;
+        ctx.fillStyle = particleColor(brightness);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      t++;
+      animRef.current = requestAnimationFrame(draw);
+    };
+
+    animRef.current = requestAnimationFrame(draw);
+    return () => {
+      cancelAnimationFrame(animRef.current);
+      window.removeEventListener('resize', resize);
+    };
+  }, [isDark]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: 'fixed',
+        top: 0, left: 0,
+        width: '100%', height: '100%',
+        zIndex: 0,
+        pointerEvents: 'none',
+      }}
+      aria-hidden="true"
+    />
+  );
+};
+
+// ============================================================
 // APPLICATION PRINCIPALE
 // ============================================================
 
@@ -3636,6 +3739,26 @@ export default function App() {
   // ===== Préférences d'affichage (thème + densité tactile) =====
   // themePref : 'auto' (suit le système) | 'light' | 'dark'
   const [themePref, setThemePref] = useState(() => readLS('finances_theme', 'auto'));
+  const [bgEnabled, setBgEnabled] = useState(() => readLS('finances_bg', '1') !== '0');
+  // systemDark : suit le media query du système (pour le mode 'auto')
+  const [systemDark, setSystemDark] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+      : false
+  );
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e) => setSystemDark(e.matches);
+    if (mq.addEventListener) mq.addEventListener('change', handler);
+    else if (mq.addListener) mq.addListener(handler);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', handler);
+      else if (mq.removeListener) mq.removeListener(handler);
+    };
+  }, []);
+  // isDark : valeur effective résolue pour le PolygonBackground et le Canvas
+  const isDark = themePref === 'dark' || (themePref === 'auto' && systemDark);
   // Détection de l'environnement mobile/tactile : on combine la largeur d'écran (≤768px)
   // et la présence d'un pointeur tactile principal. Cela garantit le mode tactile sur iPhone
   // ET sur tablette tactile en orientation étroite.
@@ -3701,6 +3824,11 @@ export default function App() {
     writeLS('finances_theme', themePref);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themePref]);
+
+  useEffect(() => {
+    writeLS('finances_bg', bgEnabled ? '1' : '0');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bgEnabled]);
 
   const importJsonRef = useRef(null);
 
@@ -4048,11 +4176,16 @@ export default function App() {
   ];
 
   return (
-    <div className="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100" style={{ fontFamily: '"Inter", system-ui, sans-serif' }}>
+    <div className="min-h-screen text-stone-900 dark:text-stone-100" style={{ fontFamily: '"Inter", system-ui, sans-serif', backgroundColor: 'transparent' }}>
+      {/* Background animé — affiché seulement si activé dans les paramètres */}
+      {bgEnabled && <ParticleWaveBackground isDark={isDark} />}
+
+      {/* Wrapper principal au-dessus du canvas (z-index: 1) */}
+      <div style={{ position: 'relative', zIndex: 1 }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap');
         .font-serif { font-family: 'Fraunces', Georgia, serif; font-optical-sizing: auto; }
-        body, html { font-family: 'Inter', system-ui, sans-serif; }
+        body, html { font-family: 'Inter', system-ui, sans-serif; background: transparent !important; }
 
         /* ============================================================
            THÈME SOMBRE — overrides ciblés des classes Tailwind utilisées
@@ -4416,6 +4549,8 @@ export default function App() {
         onForceSync={forceSyncFromGist}
         themePref={themePref}
         onThemeChange={setThemePref}
+        bgEnabled={bgEnabled}
+        onBgToggle={() => setBgEnabled(v => !v)}
         isMobileTouch={isMobileTouch}
         onExport={exportData}
         onImportClick={() => importJsonRef.current?.click()}
@@ -4430,6 +4565,7 @@ export default function App() {
         onImport={importBatch}
         categories={categories}
       />
+      </div> {/* fin wrapper z-index:1 */}
     </div>
   );
 }
