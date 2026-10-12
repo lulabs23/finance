@@ -3,7 +3,8 @@ import {
   Wallet, TrendingUp, TrendingDown, Calendar as CalendarIcon, Upload, Download,
   Plus, Trash2, Edit2, X, Check, ChevronLeft, ChevronRight, FileText, Image as ImageIcon,
   Tags, RefreshCw, Receipt, AlertCircle, Search, Home, BarChart3, Clock, FolderOpen,
-  CheckCircle2, Circle, Settings, Eye, EyeOff, Building2, User as UserIcon, Pencil, Cloud, Paperclip
+  CheckCircle2, Circle, Settings, Eye, EyeOff, Building2, User as UserIcon, Pencil, Cloud, Paperclip,
+  Briefcase
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis,
@@ -19,6 +20,17 @@ const uuid = () => 'tx_' + Math.random().toString(36).slice(2, 11) + Date.now().
 const formatEUR = (n) => {
   const v = Number(n) || 0;
   return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 }).format(v);
+};
+
+// Montant compact pour les petites zones (calendrier) : « 12 € », « 12,50 € »
+// (sans le symbole si withSymbol = false, pour les lignes serrées de la grille)
+const formatMontantCourt = (n, withSymbol = true) => {
+  const v = Math.abs(Number(n) || 0);
+  const hasCents = Math.round(v * 100) % 100 !== 0;
+  return new Intl.NumberFormat('fr-FR', {
+    minimumFractionDigits: hasCents ? 2 : 0,
+    maximumFractionDigits: 2,
+  }).format(v) + (withSymbol ? ' €' : '');
 };
 
 const formatDateFR = (iso) => {
@@ -183,6 +195,7 @@ const DEFAULT_CATEGORIES = [
   { id: 'cat_abo', name: 'Abonnements', color: '#e07a5f' },
   { id: 'cat_autre', name: 'Autres', color: '#9c9c9c' },
   { id: 'cat_revenu', name: 'Revenu', color: '#3d5a80' },
+  { id: 'cat_affaires', name: 'Affaires', color: '#b5935a' },
 ];
 
 // Helper : récupère un tableau de categorieIds depuis une transaction,
@@ -199,6 +212,44 @@ const primaryCatId = (tx) => getCatIds(tx)[0] || null;
 // Rétro-compatibilité : si le champ est absent, on considère le revenu comme reçu
 // (comportement historique avant l'introduction du champ).
 const isRevenuRecu = (tx) => tx.type !== 'revenu' || tx.recu !== false;
+
+// Registres séparés. Le modèle de données ne change pas (compatibilité avec les
+// sauvegardes et le gist existants) :
+//   - frais de société   = dépense remboursable de type « societe » (type par défaut historique)
+//   - avance à un proche = dépense remboursable de type « proximite »
+// Les frais de société ne sont affichés QUE dans la rubrique « Société ».
+const isSociete = (tx) => !!tx.remboursable && tx.remboursableType !== 'proximite';
+const isProximite = (tx) => !!tx.remboursable && tx.remboursableType === 'proximite';
+
+// Affaires (achat-revente) : toute transaction de la catégorie « Affaires ».
+// La rubrique « Affaires » en est une vue dédiée : projet facultatif (`affaire`),
+// acheteur d'une vente (`acheteur`), argent arrivé ou non (`recu`).
+const isAffaireCat = (c) => c.id === 'cat_affaires' || /^affaires?$/i.test(String(c.name || '').trim());
+const isAffaire = (tx, affaireCatIds) => getCatIds(tx).some(id => affaireCatIds.includes(id));
+
+// Créances : ce que les autres me doivent. Trois sources possibles :
+//   - une dépense dont tout ou partie est due par quelqu'un (remboursable « proximite »,
+//     champ optionnel `montantDu` ; absent = toute la dépense, comme avant) ;
+//   - un revenu en attente lié à une dette (champ `dette`) ;
+//   - une vente de la catégorie « Affaires » pas encore encaissée : créance automatique,
+//     le débiteur est l'acheteur.
+// `duPar` (optionnel) nomme le débiteur ; `dejaRecu` (optionnel) est la part déjà reçue.
+const isDetteRevenu = (tx, affaireCatIds = []) => tx.type === 'revenu' && (
+  !!tx.dette
+  || (tx.recu === false && Math.abs(Number(tx.montant) || 0) > 0 && isAffaire(tx, affaireCatIds))
+);
+const isDu = (tx, affaireCatIds = []) => isProximite(tx) || isDetteRevenu(tx, affaireCatIds);
+const montantDu = (tx, affaireCatIds = []) => {
+  const total = Math.abs(Number(tx.montant) || 0);
+  if (isDetteRevenu(tx, affaireCatIds)) return total;
+  if (!isProximite(tx)) return 0;
+  const du = Number(tx.montantDu);
+  return du > 0 && du < total ? du : total;
+};
+const debiteurDe = (tx) => String(tx.duPar || tx.acheteur || '').trim();
+// Part déjà reçue d'un montant encore en attente (remboursement ou encaissement partiel)
+const dejaRecu = (tx) => { const v = Number(tx.dejaRecu); return v > 0 ? v : 0; };
+const isDuRegle = (tx) => (tx.type === 'revenu' ? tx.recu !== false : !!tx.rembourse);
 
 // ============================================================
 // HOOKS UTILITAIRES
@@ -518,6 +569,18 @@ const CatBadges = ({ ids, categories, max = 3 }) => {
   );
 };
 
+// Rappel, sur une dépense affichée pour sa part personnelle, du montant dû par un tiers
+const DuBadge = ({ t }) => {
+  if (!(t._du > 0)) return null;
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded shrink-0 ${
+      t._duRegle ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+    }`}>
+      <UserIcon size={9} /> {formatMontantCourt(t._du)} {t._duRegle ? 'remb.' : (t._du > 1 ? 'dus' : 'dû')}
+    </span>
+  );
+};
+
 const ProgressBar = ({ value, max = 100 }) => (
   <div className="w-full h-1.5 bg-stone-100 rounded-full overflow-hidden">
     <div
@@ -697,12 +760,24 @@ const JustificatifViewer = ({ open, onClose, justificatif }) => {
 // FORMULAIRE TRANSACTION
 // ============================================================
 
-const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate }) => {
+const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, personnes = [], projets = [], acheteurs = [] }) => {
+  const affaireCatIds = categories.filter(isAffaireCat).map(c => c.id);
   const [tx, setTx] = useState(() => {
     if (initial) {
       // Migration : si la transaction n'a que categorieId, on la convertit
       const ids = getCatIds(initial);
-      return { ...initial, categorieIds: ids };
+      return {
+        ...initial,
+        categorieIds: ids,
+        montantDu: initial.montantDu ?? '',
+        duPar: initial.duPar || '',
+        dette: !!initial.dette,
+        affaire: initial.affaire || '',
+        acheteur: initial.acheteur || '',
+        quantite: initial.quantite ?? '',
+        reduction: initial.reduction ?? '',
+        dejaRecu: initial.dejaRecu ?? '',
+      };
     }
     return {
       id: uuid(),
@@ -720,13 +795,30 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate })
       recu: true,
       justificatif: null,
       notes: '',
+      // Créance : part d'une dépense due par un tiers, ou revenu en attente lié à une dette
+      montantDu: '',
+      duPar: '',
+      dette: false,
+      // Catégorie « Affaires » : projet d'achat-revente (et acheteur, pour une vente)
+      affaire: '',
+      acheteur: '',
+      // Vente d'une affaire : quantité vendue et réduction accordée
+      quantite: '',
+      reduction: '',
+      // Part déjà reçue d'un montant en attente (remboursement ou encaissement partiel)
+      dejaRecu: '',
     };
   });
+
+  // Vrai dès que la catégorie « Affaires » est cochée : affiche Projet / Acheteur
+  const affaireOn = (tx.categorieIds || []).some(id => affaireCatIds.includes(id));
 
   const handleSubmit = () => {
     if (!tx.libelle.trim()) return;
     const rawAmount = parseFloat(String(tx.montant).replace(',', '.'));
-    if (isNaN(rawAmount) || rawAmount === 0) return;
+    if (isNaN(rawAmount)) return;
+    // Montant nul accepté uniquement pour une vente de la catégorie « Affaires » (don, réduction totale)
+    if (rawAmount === 0 && !(tx.type === 'revenu' && affaireOn)) return;
     const finalAmount = tx.type === 'revenu' ? Math.abs(rawAmount) : -Math.abs(rawAmount);
 
     // Si aucune catégorie sélectionnée → fallback automatique
@@ -737,7 +829,63 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate })
           : (categories.find(c => c.id === 'cat_autre') ? ['cat_autre'] : [categories[0]?.id].filter(Boolean)));
 
     const { categorieId, ...rest } = tx; // on retire l'ancien champ legacy
-    onSave({ ...rest, categorieIds: finalCatIds, montant: finalAmount });
+    const out = { ...rest, categorieIds: finalCatIds, montant: finalAmount };
+
+    // Créance : on ne garde que les champs qui ont un sens pour ce type de transaction
+    const duPar = String(tx.duPar || '').trim();
+    delete out.montantDu;
+    delete out.duPar;
+    delete out.dette;
+    if (out.type === 'revenu') {
+      out.remboursable = false;
+      out.rembourse = false;
+      if (tx.dette) {
+        out.dette = true;
+        if (duPar) out.duPar = duPar;
+      }
+    } else if (out.remboursable && out.remboursableType === 'proximite') {
+      const du = parseFloat(String(tx.montantDu ?? '').replace(',', '.'));
+      if (du > 0 && du < Math.abs(rawAmount)) out.montantDu = Math.round(du * 100) / 100;
+      if (duPar) out.duPar = duPar;
+    }
+
+    // Projet et acheteur : conservés seulement avec la catégorie « Affaires »
+    const projet = String(tx.affaire || '').trim();
+    const acheteur = String(tx.acheteur || '').trim();
+    delete out.affaire;
+    delete out.acheteur;
+    const num = (v) => parseFloat(String(v ?? '').replace(',', '.'));
+    const round2 = (v) => Math.round(v * 100) / 100;
+    delete out.quantite;
+    delete out.reduction;
+    if (finalCatIds.some(id => affaireCatIds.includes(id))) {
+      if (projet) out.affaire = projet;
+      if (num(tx.quantite) > 0) out.quantite = num(tx.quantite);
+      if (out.type === 'revenu') {
+        if (acheteur) out.acheteur = acheteur;
+        if (num(tx.reduction) > 0) out.reduction = round2(num(tx.reduction));
+        // vente en attente = créance automatique sur l'acheteur : pas de débiteur à part
+        delete out.dette;
+        delete out.duPar;
+      }
+    }
+
+    // Remboursement / encaissement partiel : gardé seulement tant que le montant est en attente
+    delete out.dejaRecu;
+    const deja = num(tx.dejaRecu);
+    if (deja > 0) {
+      if (out.type === 'revenu') {
+        if (out.recu === false) {
+          if (deja >= Math.abs(finalAmount)) out.recu = true;
+          else out.dejaRecu = round2(deja);
+        }
+      } else if (out.remboursable && !out.rembourse) {
+        const total = out.remboursableType === 'proximite' && out.montantDu ? out.montantDu : Math.abs(finalAmount);
+        if (deja >= total) out.rembourse = true;
+        else out.dejaRecu = round2(deja);
+      }
+    }
+    onSave(out);
   };
 
   const toggleCat = (catId) => {
@@ -767,7 +915,12 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate })
           Dépense
         </button>
         <button
-          onClick={() => setTx({ ...tx, type: 'revenu', categorieIds: ['cat_revenu'] })}
+          onClick={() => setTx({
+            ...tx,
+            type: 'revenu',
+            // une vente garde la catégorie « Affaires » ; sinon catégorie Revenu par défaut
+            categorieIds: affaireOn ? (tx.categorieIds || []).filter(id => affaireCatIds.includes(id)) : ['cat_revenu'],
+          })}
           className={`flex-1 py-2.5 rounded-xl font-medium transition ${
             tx.type === 'revenu'
               ? 'bg-emerald-700 text-white'
@@ -833,75 +986,229 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate })
         </div>
       </div>
 
-      {tx.type === 'dépense' && (
-        <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-3 space-y-2.5">
-          <label className="flex items-center gap-2.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={tx.remboursable}
-              onChange={(e) => setTx({ ...tx, remboursable: e.target.checked, rembourse: e.target.checked ? tx.rembourse : false })}
-              className="w-4 h-4 rounded border-stone-300 text-stone-900 focus:ring-stone-900/20"
+      {affaireOn && (
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Projet</label>
+            <Input
+              value={tx.affaire}
+              onChange={(e) => setTx({ ...tx, affaire: e.target.value })}
+              placeholder="Nom du projet"
+              list="finances-projets"
             />
-            <span className="text-sm text-stone-700">Cette dépense est remboursable</span>
-          </label>
-          {tx.remboursable && (
-            <div className="ml-6 space-y-2">
-              <div className="flex gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setTx({ ...tx, remboursableType: 'societe' })}
-                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition border ${
-                    (tx.remboursableType || 'societe') === 'societe'
-                      ? 'bg-stone-900 text-white border-stone-900'
-                      : 'bg-white text-stone-700 border-stone-200 hover:border-stone-400'
-                  }`}
-                >
-                  <Building2 size={12} /> Société
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTx({ ...tx, remboursableType: 'proximite' })}
-                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition border ${
-                    tx.remboursableType === 'proximite'
-                      ? 'bg-stone-900 text-white border-stone-900'
-                      : 'bg-white text-stone-700 border-stone-200 hover:border-stone-400'
-                  }`}
-                >
-                  <UserIcon size={12} /> Proximité
-                </button>
-              </div>
-              <label className="flex items-center gap-2.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={tx.rembourse}
-                  onChange={(e) => setTx({ ...tx, rembourse: e.target.checked })}
-                  className="w-4 h-4 rounded border-stone-300 text-stone-900 focus:ring-stone-900/20"
-                />
-                <span className="text-sm text-stone-600">Déjà remboursée</span>
-              </label>
+          </div>
+          {tx.type === 'revenu' && (
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Acheteur</label>
+              <Input
+                value={tx.acheteur}
+                onChange={(e) => setTx({ ...tx, acheteur: e.target.value })}
+                placeholder="Nom"
+                list="finances-acheteurs"
+              />
+            </div>
+          )}
+          <div>
+            <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">
+              {tx.type === 'revenu' ? 'Quantité vendue' : 'Quantité achetée'}
+            </label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={tx.quantite}
+              onChange={(e) => setTx({ ...tx, quantite: e.target.value })}
+              placeholder={tx.type === 'revenu' ? '1' : '—'}
+            />
+          </div>
+          {tx.type === 'revenu' && (
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Réduction (€)</label>
+              <Input
+                type="text"
+                inputMode="decimal"
+                value={tx.reduction}
+                onChange={(e) => setTx({ ...tx, reduction: e.target.value })}
+                placeholder="0,00"
+              />
             </div>
           )}
         </div>
       )}
 
-      {tx.type === 'revenu' && (
-        <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-3">
-          <label className="flex items-center gap-2.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={tx.recu !== false}
-              onChange={(e) => setTx({ ...tx, recu: e.target.checked })}
-              className="w-4 h-4 rounded border-stone-300 text-emerald-700 focus:ring-emerald-700/20"
-            />
-            <span className="text-sm text-stone-700">Revenu déjà reçu sur le compte</span>
-          </label>
-          {tx.recu === false && (
-            <p className="text-xs text-stone-500 mt-2 ml-6">
-              Le revenu sera marqué « En attente ». Tu pourras le valider plus tard quand il sera crédité.
-            </p>
-          )}
-        </div>
-      )}
+      {tx.type === 'dépense' && (() => {
+        const societe = !!tx.remboursable && tx.remboursableType !== 'proximite';
+        const du = !!tx.remboursable && tx.remboursableType === 'proximite';
+        const chip = (active) => `flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-sm font-medium transition border ${
+          active
+            ? 'bg-stone-900 text-white border-stone-900'
+            : 'bg-white text-stone-700 border-stone-200 hover:border-stone-400'
+        }`;
+        const off = { ...tx, remboursable: false, rembourse: false };
+        return (
+          <div>
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                aria-pressed={societe}
+                onClick={() => setTx(societe ? off : { ...tx, remboursable: true, remboursableType: 'societe' })}
+                className={chip(societe)}
+              >
+                <Building2 size={14} /> Frais de société
+              </button>
+              <button
+                type="button"
+                aria-pressed={du}
+                onClick={() => setTx(du ? off : { ...tx, remboursable: true, remboursableType: 'proximite' })}
+                className={chip(du)}
+              >
+                <UserIcon size={14} /> Créance
+              </button>
+            </div>
+            {(societe || du) && (
+              <div className="mt-2 bg-amber-50/50 border border-amber-100 rounded-xl p-3 space-y-2.5">
+                {du && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Montant dû (€)</label>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        value={tx.montantDu}
+                        onChange={(e) => setTx({ ...tx, montantDu: e.target.value })}
+                        placeholder="Tout le montant"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Débiteur</label>
+                      <Input
+                        value={tx.duPar}
+                        onChange={(e) => setTx({ ...tx, duPar: e.target.value })}
+                        placeholder="Nom"
+                        list="finances-personnes"
+                      />
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Remboursement</label>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      aria-pressed={!tx.rembourse}
+                      onClick={() => setTx({ ...tx, rembourse: false })}
+                      className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-sm font-medium transition ${
+                        !tx.rembourse ? 'bg-amber-500 text-white' : 'bg-white text-stone-600 hover:bg-stone-100'
+                      }`}
+                    >
+                      <Clock size={14} /> En attente
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={!!tx.rembourse}
+                      onClick={() => setTx({ ...tx, rembourse: true })}
+                      className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-sm font-medium transition ${
+                        tx.rembourse ? 'bg-emerald-700 text-white' : 'bg-white text-stone-600 hover:bg-stone-100'
+                      }`}
+                    >
+                      <CheckCircle2 size={14} /> Remboursée
+                    </button>
+                  </div>
+                </div>
+                {!tx.rembourse && (
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Déjà remboursé (€)</label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      value={tx.dejaRecu}
+                      onChange={(e) => setTx({ ...tx, dejaRecu: e.target.value })}
+                      placeholder="0,00"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      <datalist id="finances-personnes">
+        {personnes.map(p => <option key={p} value={p} />)}
+      </datalist>
+      <datalist id="finances-projets">
+        {projets.map(p => <option key={p} value={p} />)}
+      </datalist>
+      <datalist id="finances-acheteurs">
+        {acheteurs.map(p => <option key={p} value={p} />)}
+      </datalist>
+
+      {tx.type === 'revenu' && (() => {
+        // Trois états exclusifs : reçu, en attente, ou créance (en attente et dû par quelqu'un)
+        const etat = tx.recu !== false ? 'recu' : (tx.dette && !affaireOn ? 'creance' : 'attente');
+        const seg = (active, tone) => `flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-sm font-medium transition ${
+          active ? tone : 'bg-stone-50 text-stone-600 hover:bg-stone-100'
+        }`;
+        return (
+          <div>
+            <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Encaissement</label>
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                aria-pressed={etat === 'recu'}
+                onClick={() => setTx({ ...tx, recu: true })}
+                className={seg(etat === 'recu', 'bg-emerald-700 text-white')}
+              >
+                <CheckCircle2 size={14} /> Reçu
+              </button>
+              <button
+                type="button"
+                aria-pressed={etat === 'attente'}
+                onClick={() => setTx({ ...tx, recu: false, dette: false })}
+                className={seg(etat === 'attente', 'bg-amber-500 text-white')}
+              >
+                <Clock size={14} /> En attente
+              </button>
+              {!affaireOn && (
+                <button
+                  type="button"
+                  aria-pressed={etat === 'creance'}
+                  onClick={() => setTx({ ...tx, recu: false, dette: true })}
+                  className={seg(etat === 'creance', 'bg-stone-900 text-white')}
+                >
+                  <UserIcon size={14} /> Créance
+                </button>
+              )}
+            </div>
+            {(etat !== 'recu' || (tx.dette && !affaireOn)) && (
+              <div className={`grid gap-3 mt-2 ${tx.dette && !affaireOn && etat !== 'recu' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                {tx.dette && !affaireOn && (
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Débiteur</label>
+                    <Input
+                      value={tx.duPar}
+                      onChange={(e) => setTx({ ...tx, duPar: e.target.value })}
+                      placeholder="Nom"
+                      list="finances-personnes"
+                    />
+                  </div>
+                )}
+                {etat !== 'recu' && (
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Déjà reçu (€)</label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      value={tx.dejaRecu}
+                      onChange={(e) => setTx({ ...tx, dejaRecu: e.target.value })}
+                      placeholder="0,00"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <JustificatifPicker
         value={tx.justificatif}
@@ -1131,7 +1438,7 @@ const ImportModal = ({ open, onClose, onImport, categories }) => {
                 </div>
               </div>
               <div>
-                <p className="font-medium text-stone-800 mb-1">Remboursable</p>
+                <p className="font-medium text-stone-800 mb-1">Frais de société / avance à un proche</p>
                 <p>
                   <code className="px-1.5 py-0.5 bg-white rounded border border-stone-200 text-stone-900 font-mono">[R]</code> société (en attente) ·{' '}
                   <code className="px-1.5 py-0.5 bg-white rounded border border-stone-200 text-stone-900 font-mono">[R*]</code> société (remboursée)
@@ -1705,16 +2012,46 @@ const TimeViews = ({ transactions, categories }) => {
 // ============================================================
 // CALENDRIER
 // ============================================================
+// Chaque case affiche TOUTES les transactions du jour, une ligne par transaction,
+// colorée selon sa ou ses catégories. La bande « Répartition du mois » sert à la
+// fois de légende et de filtre : un clic sur une catégorie la met en avant.
 
 const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) => {
   const [cursor, setCursor] = useState(startOfMonth(new Date()));
-  const [selectedDay, setSelectedDay] = useState(null);
+  const [selectedIso, setSelectedIso] = useState(null);
   const [viewingJustif, setViewingJustif] = useState(null);
+  const [focusCat, setFocusCat] = useState(null);
+  const [mode, setMode] = useState(() => {
+    try { return window.localStorage.getItem('finances_cal_mode') === 'list' ? 'list' : 'grid'; } catch { return 'grid'; }
+  });
+  const changeMode = (m) => {
+    setMode(m);
+    try { window.localStorage.setItem('finances_cal_mode', m); } catch {}
+  };
 
-  // Toutes les transactions du jour (revenus + dépenses, remboursées comprises)
   const monthName = cursor.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  const todayIso = toISODate(new Date());
+  const isCurrentMonth = toISODate(startOfMonth(new Date())) === toISODate(cursor);
+
+  const catMap = useMemo(() => {
+    const m = {};
+    categories.forEach(c => { m[c.id] = c; });
+    return m;
+  }, [categories]);
+
+  // Catégories connues d'une transaction (les ids orphelins sont ignorés)
+  const knownCatIds = (t) => getCatIds(t).filter(id => catMap[id]);
+  const txColors = (t) => {
+    const cols = knownCatIds(t).map(id => catMap[id].color);
+    return cols.length > 0 ? cols : ['#9c9c9c'];
+  };
 
   const days = useMemo(() => {
+    const byDate = {};
+    transactions.forEach(t => {
+      if (!byDate[t.date]) byDate[t.date] = [];
+      byDate[t.date].push(t);
+    });
     const first = startOfMonth(cursor);
     const lastDate = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
     const startWeekday = (first.getDay() + 6) % 7; // Lundi = 0
@@ -1723,7 +2060,11 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
     for (let d = 1; d <= lastDate; d++) {
       const dateObj = new Date(first.getFullYear(), first.getMonth(), d);
       const isoStr = toISODate(dateObj);
-      const dayTxs = transactions.filter(t => t.date === isoStr);
+      // Revenus d'abord, puis dépenses de la plus forte à la plus faible
+      const dayTxs = (byDate[isoStr] || []).slice().sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'revenu' ? -1 : 1;
+        return Math.abs(b.montant) - Math.abs(a.montant);
+      });
       const depenses = dayTxs.filter(t => t.type === 'dépense').reduce((s, t) => s + Math.abs(t.montant), 0);
       const revenus = dayTxs.filter(t => t.type === 'revenu').reduce((s, t) => s + Math.abs(t.montant), 0);
       arr.push({
@@ -1731,34 +2072,97 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
         iso: isoStr,
         depenses,
         revenus,
-        total: depenses + revenus,
-        net: revenus - depenses,
+        nbDepenses: dayTxs.filter(t => t.type === 'dépense').length,
         count: dayTxs.length,
         txs: dayTxs,
       });
     }
+    while (arr.length % 7 !== 0) arr.push(null);
     return arr;
   }, [cursor, transactions]);
 
-  const getCatColor = (id) => categories.find(c => c.id === id)?.color || '#9c9c9c';
+  // Découpage en semaines (lignes de 7 jours) avec sous-total
+  const weeks = useMemo(() => {
+    const rows = [];
+    for (let i = 0; i < days.length; i += 7) {
+      const cells = days.slice(i, i + 7);
+      const real = cells.filter(Boolean);
+      rows.push({
+        cells,
+        depenses: real.reduce((s, d) => s + d.depenses, 0),
+        revenus: real.reduce((s, d) => s + d.revenus, 0),
+      });
+    }
+    return rows;
+  }, [days]);
 
-  const monthRevenus = days.filter(Boolean).reduce((s, d) => s + d.revenus, 0);
-  const monthDepenses = days.filter(Boolean).reduce((s, d) => s + d.depenses, 0);
+  const realDays = days.filter(Boolean);
+  const monthRevenus = realDays.reduce((s, d) => s + d.revenus, 0);
+  const monthDepenses = realDays.reduce((s, d) => s + d.depenses, 0);
   const monthNet = monthRevenus - monthDepenses;
+  const monthCount = realDays.reduce((s, d) => s + d.count, 0);
+
+  // Répartition du mois par catégorie (montant réparti à parts égales si plusieurs catégories,
+  // même convention que dans l'onglet Catégories)
+  const legend = useMemo(() => {
+    const map = {};
+    const bump = (id, name, color, key, amount) => {
+      if (!map[id]) map[id] = { id, name, color, depenses: 0, revenus: 0 };
+      map[id][key] += amount;
+    };
+    days.filter(Boolean).forEach(d => d.txs.forEach(t => {
+      const key = t.type === 'revenu' ? 'revenus' : 'depenses';
+      const ids = getCatIds(t).filter(id => catMap[id]);
+      if (ids.length === 0) {
+        bump('__none', 'Sans catégorie', '#9c9c9c', key, Math.abs(t.montant));
+        return;
+      }
+      const share = Math.abs(t.montant) / ids.length;
+      ids.forEach(id => bump(id, catMap[id].name, catMap[id].color, key, share));
+    }));
+    return Object.values(map).sort((a, b) => (b.depenses - a.depenses) || (b.revenus - a.revenus));
+  }, [days, catMap]);
+
+  const matchesFocus = (t) => {
+    if (!focusCat) return true;
+    const ids = knownCatIds(t);
+    if (focusCat === '__none') return ids.length === 0;
+    return ids.includes(focusCat);
+  };
+
+  const withAlpha = (hex, alphaHex) => (/^#[0-9a-fA-F]{6}$/.test(hex) ? hex + alphaHex : 'rgba(156,156,156,0.18)');
+  const stripeBackground = (cols) => {
+    if (cols.length === 1) return cols[0];
+    const step = 100 / cols.length;
+    return `linear-gradient(to bottom, ${cols.map((c, i) => `${c} ${i * step}% ${(i + 1) * step}%`).join(', ')})`;
+  };
+  const txTitle = (t) => {
+    const names = knownCatIds(t).map(id => catMap[id].name).join(', ') || 'Sans catégorie';
+    const du = t._du > 0 ? ` · ma part sur ${formatEUR(t._total)}` : '';
+    return `${t.libelle} · ${t.type === 'revenu' ? '+' : '−'}${formatEUR(Math.abs(t.montant))}${du} · ${names}`;
+  };
+
+  const selectedDay = selectedIso ? realDays.find(d => d.iso === selectedIso) || null : null;
 
   return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => setCursor(addMonths(cursor, -1))}>
+    <Card className="p-4 md:p-5">
+      {/* En-tête : navigation, totaux du mois, choix de la vue */}
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={() => setCursor(addMonths(cursor, -1))} title="Mois précédent">
             <ChevronLeft size={18} />
           </Button>
-          <h3 className="font-serif text-xl text-stone-900 capitalize w-48 text-center">{monthName}</h3>
-          <Button variant="ghost" size="sm" onClick={() => setCursor(addMonths(cursor, 1))}>
+          <h3 className="font-serif text-xl text-stone-900 capitalize w-44 text-center">{monthName}</h3>
+          <Button variant="ghost" size="sm" onClick={() => setCursor(addMonths(cursor, 1))} title="Mois suivant">
             <ChevronRight size={18} />
           </Button>
+          {!isCurrentMonth && (
+            <Button variant="outline" size="sm" onClick={() => setCursor(startOfMonth(new Date()))}>
+              Aujourd'hui
+            </Button>
+          )}
         </div>
-        <div className="flex items-center gap-5 ml-auto text-right">
+        <div className="flex items-center gap-4 ml-auto text-right">
           <div>
             <p className="text-[10px] uppercase tracking-wider text-emerald-700">Revenus</p>
             <p className="font-serif text-base text-emerald-700 tabular-nums">{formatEUR(monthRevenus)}</p>
@@ -1778,82 +2182,236 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
         </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-1.5 mb-2 text-xs uppercase tracking-wider text-stone-500 text-center">
-        {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => (
-          <div key={d} className="py-1">{d}</div>
-        ))}
+      {/* Répartition du mois : barre empilée + légende cliquable */}
+      <div className="mb-4 p-3 bg-stone-50 rounded-xl">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <p className="text-[10px] uppercase tracking-wider text-stone-500">
+              Répartition du mois · {monthCount} transaction{monthCount > 1 ? 's' : ''}
+            </p>
+            <div className="flex items-center gap-1 bg-stone-100 p-0.5 rounded-lg shrink-0">
+              {[{ id: 'grid', label: 'Grille' }, { id: 'list', label: 'Liste' }].map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => changeMode(m.id)}
+                  className={`no-touch-grow px-2.5 py-1 rounded-md text-xs font-medium transition ${
+                    mode === m.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {monthCount === 0 && (
+            <p className="text-stone-500 text-sm">Aucune transaction ce mois-ci.</p>
+          )}
+          {monthDepenses > 0 && (
+            <div className="flex h-2.5 rounded-full overflow-hidden bg-stone-200 mb-2.5">
+              {legend.filter(c => c.depenses > 0).map(c => (
+                <div
+                  key={c.id}
+                  title={`${c.name} · ${formatEUR(c.depenses)} · ${Math.round((c.depenses / monthDepenses) * 100)} %`}
+                  style={{
+                    width: `${(c.depenses / monthDepenses) * 100}%`,
+                    backgroundColor: c.color,
+                    opacity: focusCat && focusCat !== c.id ? 0.25 : 1,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+          <div className="cal-legend">
+            {legend.map(c => {
+              const active = focusCat === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setFocusCat(active ? null : c.id)}
+                  title={active ? 'Afficher toutes les catégories' : `Mettre en avant « ${c.name} »`}
+                  aria-pressed={active}
+                  className={`no-touch-grow inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition ${
+                    active ? 'font-semibold text-stone-900 shadow-sm' : 'font-medium border-stone-200 bg-white text-stone-700 hover:border-stone-400'
+                  }`}
+                  style={active ? { backgroundColor: withAlpha(c.color, '55'), borderColor: c.color } : {}}
+                >
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
+                  <span>{c.name}</span>
+                  {c.depenses > 0 && (
+                    <span className="tabular-nums" style={{ opacity: 0.8 }}>{formatMontantCourt(c.depenses)}</span>
+                  )}
+                  {c.revenus > 0 && (
+                    <span className="tabular-nums text-emerald-700">+{formatMontantCourt(c.revenus)}</span>
+                  )}
+                </button>
+              );
+            })}
+            {focusCat && (
+              <button
+                type="button"
+                onClick={() => setFocusCat(null)}
+                className="no-touch-grow inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium text-stone-600 hover:text-stone-900 hover:bg-stone-100 transition"
+              >
+                <X size={12} /> Tout afficher
+              </button>
+            )}
+          </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-1.5">
-        {days.map((d, idx) => {
-          if (!d) return <div key={idx} className="min-h-[56px] md:aspect-square md:min-h-0" />;
-          const isToday = toISODate(new Date()) === d.iso;
+      {/* ===================== VUE GRILLE ===================== */}
+      {mode === 'grid' && (
+        <>
+          <div className="cal-grid mb-1.5 text-[10px] md:text-xs uppercase tracking-wider text-stone-500 text-center">
+            {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => (
+              <div key={d} className="py-1">{d}</div>
+            ))}
+            <div className="cal-desktop py-1">Semaine</div>
+          </div>
 
-          // Couleurs catégories distinctes pour le jour (utilisées pour les pastilles si plusieurs tx)
-          const catColors = [];
-          d.txs.forEach(tx => {
-            getCatIds(tx).forEach(id => {
-              const col = getCatColor(id);
-              if (!catColors.includes(col)) catColors.push(col);
-            });
-          });
+          <div className="space-y-1 md:space-y-1.5">
+            {weeks.map((w, wi) => (
+              <div key={wi} className="cal-grid">
+                {w.cells.map((d, idx) => {
+                  if (!d) return <div key={`vide-${wi}-${idx}`} className="cal-cell" />;
+                  const isToday = todayIso === d.iso;
+                  return (
+                    <div
+                      key={d.iso}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedIso(d.iso)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedIso(d.iso); }
+                      }}
+                      title={d.count === 0 ? 'Ajouter une transaction' : undefined}
+                      className="cal-cell rounded-lg md:rounded-xl p-1 md:p-1.5 flex flex-col gap-1 cursor-pointer transition bg-stone-50 hover:bg-stone-100 text-left"
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className={`inline-flex items-center justify-center text-[11px] md:text-xs font-medium rounded-full ${
+                          isToday ? 'w-5 h-5 bg-stone-900 text-stone-50' : 'text-stone-500'
+                        }`}>
+                          {d.date.getDate()}
+                        </span>
+                        {d.nbDepenses > 1 && (
+                          <span className="cal-desktop text-[11px] font-semibold tabular-nums text-stone-700" title="Total des dépenses du jour">
+                            −{formatMontantCourt(d.depenses)}
+                          </span>
+                        )}
+                      </div>
 
-          return (
-            <button
-              key={d.iso}
-              onClick={() => setSelectedDay(d)}
-              className={`min-h-[56px] md:aspect-square md:min-h-0 rounded-xl p-1.5 flex flex-col items-stretch justify-between transition relative text-left overflow-hidden bg-stone-50 text-stone-700 hover:bg-stone-100
-                ${isToday ? 'ring-2 ring-stone-900 ring-offset-1' : ''}
-              `}
-            >
-              <div className="flex items-start justify-between">
-                <span className="text-xs font-medium">
+                      {d.txs.map(t => {
+                        const cols = txColors(t);
+                        const isRev = t.type === 'revenu';
+                        const enAttente = (isRev && t.recu === false) || (t._du > 0 && !t._duRegle);
+                        return (
+                          <div
+                            key={t.id}
+                            title={txTitle(t)}
+                            className="cal-chip flex items-stretch rounded overflow-hidden text-stone-900"
+                            style={{
+                              backgroundColor: withAlpha(cols[0], '30'),
+                              opacity: matchesFocus(t) ? 1 : 0.2,
+                              outline: enAttente ? '1px dashed rgba(180, 83, 9, 0.7)' : 'none',
+                              outlineOffset: '-1px',
+                            }}
+                          >
+                            <span className="shrink-0" style={{ width: 4, background: stripeBackground(cols) }} />
+                            <span className="cal-desktop flex-1 min-w-0 truncate pl-1.5 pr-1 text-[11px] leading-5">{t.libelle}</span>
+                            <span className={`cal-desktop shrink-0 pr-1.5 text-[11px] leading-5 font-medium tabular-nums ${isRev ? 'text-emerald-700' : ''}`}>
+                              {isRev ? '+' : '−'}{formatMontantCourt(t.montant, false)}
+                            </span>
+                            <span className={`cal-mobile flex-1 min-w-0 text-center text-[10px] leading-4 font-medium tabular-nums ${isRev ? 'text-emerald-700' : ''}`}>
+                              {isRev ? '+' : ''}{Math.round(Math.abs(t.montant))}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+
+                {/* Sous-total de la semaine (ordinateur uniquement) */}
+                <div className="cal-week-cell rounded-xl px-1.5 py-1.5 flex-col items-end justify-start gap-0.5 border border-stone-100">
+                  {w.depenses > 0 && (
+                    <span className="text-xs font-semibold tabular-nums text-stone-900">−{formatMontantCourt(Math.round(w.depenses))}</span>
+                  )}
+                  {w.revenus > 0 && (
+                    <span className="text-xs font-medium tabular-nums text-emerald-700">+{formatMontantCourt(Math.round(w.revenus))}</span>
+                  )}
+                  {w.depenses === 0 && w.revenus === 0 && <span className="text-xs text-stone-400">—</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ===================== VUE LISTE ===================== */}
+      {mode === 'list' && (
+        <div className="space-y-2">
+          {realDays.filter(d => d.count > 0).map(d => (
+            <div key={d.iso} className="flex items-start gap-3 p-2.5 bg-stone-50 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setSelectedIso(d.iso)}
+                title="Détail du jour"
+                className="w-11 shrink-0 text-center rounded-lg hover:bg-stone-100 transition py-0.5"
+              >
+                <span className="block text-[10px] uppercase tracking-wider text-stone-500">
+                  {d.date.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', '')}
+                </span>
+                <span className={`block font-serif text-xl leading-tight ${todayIso === d.iso ? 'text-emerald-700' : 'text-stone-900'}`}>
                   {d.date.getDate()}
                 </span>
-                {d.count > 0 && (
-                  <span className="text-[9px] font-medium px-1 rounded bg-stone-200/70 text-stone-700">
-                    {d.count}
-                  </span>
-                )}
+              </button>
+              <div className="flex-1 min-w-0 space-y-1">
+                {d.txs.map(t => {
+                  const cols = txColors(t);
+                  const isRev = t.type === 'revenu';
+                  const names = knownCatIds(t).map(id => catMap[id].name).join(' · ') || 'Sans catégorie';
+                  const enAttente = (isRev && t.recu === false) || (t._du > 0 && !t._duRegle);
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => onEdit && onEdit(t)}
+                      title="Modifier"
+                      className="w-full flex items-stretch rounded-lg overflow-hidden text-left text-stone-900 transition"
+                      style={{
+                        backgroundColor: withAlpha(cols[0], '30'),
+                        opacity: matchesFocus(t) ? 1 : 0.2,
+                        outline: enAttente ? '1px dashed rgba(180, 83, 9, 0.7)' : 'none',
+                        outlineOffset: '-1px',
+                      }}
+                    >
+                      <span className="shrink-0" style={{ width: 4, background: stripeBackground(cols) }} />
+                      <span className="flex-1 min-w-0 px-2.5 py-1.5">
+                        <span className="block text-sm font-medium truncate">{t.libelle}</span>
+                        <span className="block text-[11px] text-stone-600 truncate">{names}{enAttente ? ' · en attente' : ''}</span>
+                      </span>
+                      <span className={`shrink-0 self-center pr-2.5 text-sm font-medium tabular-nums ${isRev ? 'text-emerald-700' : ''}`}>
+                        {isRev ? '+' : '−'}{formatEUR(Math.abs(t.montant))}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
-
-              {d.txs.length === 1 && (
-                <div className="text-[9px] leading-tight truncate text-stone-600" title={d.txs[0].libelle}>
-                  {d.txs[0].libelle}
+              {d.count > 1 && (
+                <div className="cal-desktop shrink-0 w-24 text-right pt-1">
+                  {d.depenses > 0 && <p className="text-sm font-semibold tabular-nums text-stone-900">−{formatEUR(d.depenses)}</p>}
+                  {d.revenus > 0 && <p className="text-sm font-medium tabular-nums text-emerald-700">+{formatEUR(d.revenus)}</p>}
                 </div>
               )}
-              {d.txs.length > 1 && (
-                <div className="flex flex-wrap gap-0.5 my-0.5">
-                  {catColors.slice(0, 5).map((col, i) => (
-                    <span key={i} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: col }} />
-                  ))}
-                </div>
-              )}
-
-              {/* Pied de cellule : revenus puis dépenses, séparés visuellement */}
-              {(d.revenus > 0 || d.depenses > 0) && (
-                <div className="flex flex-col gap-0">
-                  {d.revenus > 0 && (
-                    <span className="text-[10px] font-medium tabular-nums leading-tight text-emerald-700">
-                      +{Math.round(d.revenus)}€
-                    </span>
-                  )}
-                  {d.depenses > 0 && (
-                    <span className="text-[10px] font-medium tabular-nums leading-tight text-stone-700">
-                      −{Math.round(d.depenses)}€
-                    </span>
-                  )}
-                </div>
-              )}
-            </button>
-          );
-        })}
-      </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <Modal
         open={!!selectedDay}
-        onClose={() => setSelectedDay(null)}
-        title={selectedDay ? formatDateFR(selectedDay.iso) : ''}
+        onClose={() => setSelectedIso(null)}
+        title={selectedDay ? selectedDay.date.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : ''}
       >
         {selectedDay && (
           <div className="space-y-4">
@@ -1865,7 +2423,7 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
               </div>
               <Button size="sm" onClick={() => {
                 onAddTx(selectedDay.iso);
-                setSelectedDay(null);
+                setSelectedIso(null);
               }}>
                 <Plus size={14} /> Ajouter
               </Button>
@@ -1876,47 +2434,41 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
               <div className="space-y-2">
                 {selectedDay.txs.map(t => (
                   <div key={t.id} className="group flex items-center gap-3 p-3 bg-stone-50 rounded-xl hover:bg-stone-100 transition">
+                    <span className="self-stretch shrink-0 rounded-full" style={{ width: 4, background: stripeBackground(txColors(t)) }} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-stone-900 truncate">{t.libelle}</p>
                         {t.justificatif && (
                           <button
                             onClick={() => setViewingJustif(t.justificatif)}
-                            className="text-stone-500 hover:text-stone-900 transition shrink-0"
+                            className="no-touch-grow text-stone-500 hover:text-stone-900 transition shrink-0"
                             title="Voir la facture jointe"
                           >
                             <Paperclip size={12} />
                           </button>
                         )}
-                        {t.remboursable && (
-                          <span className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded ${
-                            t.rembourse ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                          }`}>
-                            {(t.remboursableType || 'societe') === 'proximite' ? <UserIcon size={9} /> : <Building2 size={9} />}
-                            {t.rembourse ? 'Remb.' : 'En attente'}
-                          </span>
-                        )}
+                        <DuBadge t={t} />
                         {t.type === 'revenu' && t.recu === false && (
-                          <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                          <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 shrink-0">
                             <Clock size={9} /> En attente
                           </span>
                         )}
                       </div>
                       <CatBadges ids={getCatIds(t)} categories={categories} max={3} />
                     </div>
-                    <p className={`font-serif text-lg tabular-nums ${t.type === 'revenu' ? 'text-emerald-700' : 'text-stone-900'}`}>
+                    <p className={`font-serif text-lg tabular-nums shrink-0 ${t.type === 'revenu' ? 'text-emerald-700' : 'text-stone-900'}`}>
                       {t.type === 'revenu' ? '+' : '−'}{formatEUR(Math.abs(t.montant))}
                     </p>
-                    <div className="flex gap-1 opacity-60 group-hover:opacity-100 transition">
+                    <div className="flex gap-1 opacity-60 group-hover:opacity-100 transition shrink-0">
                       <button
-                        onClick={() => { onEdit && onEdit(t); setSelectedDay(null); }}
+                        onClick={() => { onEdit && onEdit(t); setSelectedIso(null); }}
                         className="p-1.5 rounded-lg hover:bg-white text-stone-600 hover:text-stone-900 transition"
                         title="Modifier"
                       >
                         <Pencil size={14} />
                       </button>
                       <button
-                        onClick={() => { onDelete && onDelete(t.id); setSelectedDay(null); }}
+                        onClick={() => { onDelete && onDelete(t.id); setSelectedIso(null); }}
                         className="p-1.5 rounded-lg hover:bg-white text-stone-600 hover:text-rose-600 transition"
                         title="Supprimer"
                       >
@@ -1941,19 +2493,64 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
 };
 
 // ============================================================
-// REMBOURSABLES
+// REGISTRES SÉPARÉS : FRAIS DE SOCIÉTÉ / CRÉANCES
 // ============================================================
+// Le même composant sert aux deux rubriques. `scope` choisit le registre :
+//   - 'societe'   → rubrique « Société » : TOUS les frais de société, et uniquement eux.
+//                   Ces dépenses n'apparaissent dans aucune autre vue de l'application.
+//   - 'proximite' → rubrique « Créances » : parts de dépenses dues par un tiers
+//                   et revenus en attente liés à une dette.
 
-const ReimbursableView = ({ transactions, categories, onUpdate }) => {
-  const reimbursables = transactions.filter(t => t.remboursable);
-  const pending = reimbursables.filter(t => !t.rembourse);
-  const completed = reimbursables.filter(t => t.rembourse);
+const REIMB_SCOPES = {
+  societe: {
+    titre: 'Frais de société',
+    ajouter: 'Ajouter un frais',
+    doc: 'Note de frais',
+    docTitre: 'Note de frais',
+    objetAttente: 'Note de frais à rembourser',
+    unite: 'frais',
+    unitePluriel: 'frais',
+    vide: 'Aucun frais de société enregistré pour le moment.',
+    kpiTotal: 'Total des frais',
+  },
+  proximite: {
+    titre: 'Créances',
+    ajouter: 'Ajouter une créance',
+    doc: 'Récapitulatif',
+    docTitre: 'Demande de remboursement',
+    objetAttente: 'Sommes à rembourser',
+    unite: 'créance',
+    unitePluriel: 'créances',
+    vide: 'Aucune créance enregistrée pour le moment.',
+    kpiTotal: 'Total',
+  },
+};
 
-  const totalPending = pending.reduce((s, t) => s + Math.abs(t.montant), 0);
-  const totalCompleted = completed.reduce((s, t) => s + Math.abs(t.montant), 0);
+const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpdate, onEdit, onDelete, onAdd, scope = 'societe' }) => {
+  const L = REIMB_SCOPES[scope] || REIMB_SCOPES.societe;
+  const duScope = scope === 'proximite';
+  const ScopeIcon = duScope ? UserIcon : Building2;
+  // Montant concerné et statut « réglé » selon le registre
+  const amt = (t) => (duScope ? montantDu(t, affaireCatIds) : Math.abs(t.montant));
+  const regle = (t) => (duScope ? isDuRegle(t) : !!t.rembourse);
+  // Remboursement partiel : part déjà reçue et reste à recevoir
+  const recuPart = (t) => (regle(t) ? amt(t) : Math.min(dejaRecu(t), amt(t)));
+  const reste = (t) => amt(t) - recuPart(t);
+  // Montant porté sur le document : le reste à payer tant que ce n'est pas réglé
+  const docAmt = (t) => (regle(t) ? amt(t) : reste(t));
+  const reimbursables = transactions.filter(t => (duScope ? isDu(t, affaireCatIds) : isSociete(t)));
+  const pending = reimbursables.filter(t => !regle(t));
+  const completed = reimbursables.filter(t => regle(t));
+
+  const totalPending = pending.reduce((s, t) => s + reste(t), 0);
+  const totalCompleted = reimbursables.reduce((s, t) => s + recuPart(t), 0);
 
   const getCatColor = (id) => categories.find(c => c.id === id)?.color || '#9c9c9c';
   const getCatName = (id) => categories.find(c => c.id === id)?.name || 'Inconnue';
+
+  // Filtres de la liste
+  const [statusFilter, setStatusFilter] = useState('all'); // all | pending | paid
+  const [search, setSearch] = useState('');
 
   const [viewingJustif, setViewingJustif] = useState(null);
 
@@ -1967,7 +2564,7 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
     destinataireNom: '',
     destinataireAdresse: '',
     numero: 'NDF-' + new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0'),
-    objet: 'Note de frais à rembourser',
+    objet: L.objetAttente,
     selectedIds: pending.map(t => t.id),
   });
 
@@ -1988,11 +2585,11 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
 
   // Les transactions sélectionnées peuvent être en attente OU remboursées
   const selectedTxs = reimbursables.filter(t => invoice.selectedIds.includes(t.id));
-  const invoiceTotal = selectedTxs.reduce((s, t) => s + Math.abs(t.montant), 0);
+  const invoiceTotal = selectedTxs.reduce((s, t) => s + docAmt(t), 0);
 
   // Détecte si la sélection mélange en attente et remboursées (info utile pour adapter le titre)
-  const selectedHasPending = selectedTxs.some(t => !t.rembourse);
-  const selectedHasPaid = selectedTxs.some(t => t.rembourse);
+  const selectedHasPending = selectedTxs.some(t => !regle(t));
+  const selectedHasPaid = selectedTxs.some(t => regle(t));
 
   // Adapte automatiquement l'objet par défaut selon ce qu'on inclut.
   // On ne le fait qu'à la première ouverture pour ne pas écraser ce que l'utilisateur a tapé.
@@ -2008,7 +2605,7 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
     setInvoice(inv => ({
       ...inv,
       selectedIds: pending.map(t => t.id),
-      objet: pending.length > 0 ? 'Note de frais à rembourser' : 'Récapitulatif des dépenses remboursées',
+      objet: pending.length > 0 ? L.objetAttente : 'Récapitulatif des dépenses remboursées',
     }));
     setInvoiceFilter('pending');
     setInvoiceOpen(true);
@@ -2033,7 +2630,7 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
             <td>${escapeHtml(formatDateFR(t.date))}</td>
             <td>${escapeHtml(t.libelle)}${t.notes ? `<div style="font-size:11px;color:#78716c;margin-top:2px;">${escapeHtml(t.notes)}</div>` : ''}</td>
             <td style="color:#57534e;font-size:12px;">${escapeHtml(cats)}</td>
-            <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:500;">${formatEUR(Math.abs(t.montant))}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:500;">${formatEUR(docAmt(t))}</td>
           </tr>`;
       }).join('');
 
@@ -2172,7 +2769,7 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
 
   <div class="header">
     <div>
-      <h1>${selectedHasPaid && !selectedHasPending ? 'Récapitulatif' : 'Note de frais'}</h1>
+      <h1>${selectedHasPaid && !selectedHasPending ? 'Récapitulatif' : escapeHtml(L.docTitre)}</h1>
       <div style="color:#78716c;font-size:13px;">${escapeHtml(invoice.objet)}</div>
     </div>
     <div class="meta">
@@ -2227,7 +2824,7 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
       <div style="border-bottom: 1px solid #e7e5e4; padding-bottom: 12px; margin-bottom: 16px;">
         <p style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#78716c;margin:0 0 4px;">Annexe — Justificatif n°${idx + 1}</p>
         <p style="margin:0;font-weight:600;">${escapeHtml(t.libelle)}</p>
-        <p style="margin:2px 0 0;font-size:12px;color:#57534e;">${escapeHtml(formatDateFR(t.date))} · ${formatEUR(Math.abs(t.montant))}</p>
+        <p style="margin:2px 0 0;font-size:12px;color:#57534e;">${escapeHtml(formatDateFR(t.date))} · ${formatEUR(docAmt(t))}</p>
       </div>
       <img src="${t.justificatif.dataUrl}" alt="Justificatif" style="max-width:100%;max-height:80vh;display:block;margin:0 auto;border:1px solid #e7e5e4;" />
     </div>
@@ -2293,7 +2890,9 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
   };
 
   const toggleRembourse = (tx) => {
-    onUpdate({ ...tx, rembourse: !tx.rembourse });
+    // Revenu lié à une dette : « réglé » = revenu reçu. Dépense : « réglé » = remboursée.
+    if (tx.type === 'revenu') onUpdate({ ...tx, recu: tx.recu === false });
+    else onUpdate({ ...tx, rembourse: !tx.rembourse });
   };
 
   const toggleInvoiceTx = (id) => {
@@ -2305,96 +2904,278 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
     }));
   };
 
+  // ---- Liste affichée : filtre de statut + recherche, regroupée par mois ----
+  const q = search.trim().toLowerCase();
+  const listed = reimbursables
+    .filter(t => statusFilter === 'all' || (statusFilter === 'pending' ? !regle(t) : regle(t)))
+    .filter(t => !q || [t.libelle, t.notes, t.duPar, duScope ? t.acheteur : ''].some(v => (v || '').toLowerCase().includes(q)))
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const listedTotal = listed.reduce((s, t) => s + amt(t), 0);
+
+  const monthGroups = [];
+  listed.forEach(t => {
+    const key = (t.date || '').slice(0, 7);
+    let g = monthGroups[monthGroups.length - 1];
+    if (!g || g.key !== key) {
+      const [yy, mm] = key.split('-').map(n => parseInt(n, 10));
+      const label = (yy && mm)
+        ? new Date(yy, mm - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+        : 'Sans date';
+      g = { key, label, txs: [], total: 0, pending: 0 };
+      monthGroups.push(g);
+    }
+    g.txs.push(t);
+    g.total += amt(t);
+    g.pending += reste(t);
+  });
+
+  // Répartition par catégorie de la sélection affichée (parts égales si plusieurs catégories)
+  const catBreakdown = (() => {
+    const map = {};
+    listed.forEach(t => {
+      const ids = getCatIds(t).filter(id => categories.some(c => c.id === id));
+      const keys = ids.length > 0 ? ids : ['__none'];
+      const share = amt(t) / keys.length;
+      keys.forEach(id => {
+        if (!map[id]) {
+          map[id] = {
+            id,
+            name: id === '__none' ? 'Sans catégorie' : getCatName(id),
+            color: id === '__none' ? '#9c9c9c' : getCatColor(id),
+            total: 0,
+          };
+        }
+        map[id].total += share;
+      });
+    });
+    return Object.values(map).sort((a, b) => b.total - a.total);
+  })();
+  const catMax = Math.max(...catBreakdown.map(c => c.total), 1);
+
+  // Créances : montants encore en attente, par débiteur
+  const personBreakdown = (() => {
+    const map = {};
+    pending.forEach(t => {
+      const name = debiteurDe(t) || 'Non précisé';
+      map[name] = (map[name] || 0) + reste(t);
+    });
+    return Object.keys(map).map(name => ({ name, total: map[name] })).sort((a, b) => b.total - a.total);
+  })();
+  const personMax = Math.max(...personBreakdown.map(p => p.total), 1);
+
+  const plural = (n) => `${n} ${n > 1 ? L.unitePluriel : L.unite}`;
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* En-tête de la rubrique */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-stone-900 flex items-center justify-center shrink-0">
+              <ScopeIcon className="text-stone-50" size={18} />
+            </div>
+            <h2 className="font-serif text-xl text-stone-900 whitespace-nowrap">{L.titre}</h2>
+          </div>
+          <div className="flex gap-2 shrink-0 ml-auto">
+            <Button variant="outline" size="sm" onClick={openInvoice} disabled={reimbursables.length === 0}>
+              <FileText size={14} /> {L.doc}
+            </Button>
+            <Button size="sm" onClick={() => onAdd && onAdd()}>
+              <Plus size={14} /> {L.ajouter}
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Indicateurs */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="p-5 bg-amber-50/40 border-amber-100">
           <div className="flex items-center gap-3 mb-2">
             <Clock className="text-amber-700" size={20} />
-            <p className="text-xs uppercase tracking-wider text-amber-800">En attente</p>
+            <p className="text-xs uppercase tracking-wider text-amber-800">En attente de remboursement</p>
           </div>
-          <p className="font-serif text-3xl text-stone-900">{formatEUR(totalPending)}</p>
-          <p className="text-sm text-stone-600 mt-1">{pending.length} dépense{pending.length > 1 ? 's' : ''}</p>
+          <p className="font-serif text-3xl text-stone-900 tabular-nums">{formatEUR(totalPending)}</p>
+          <p className="text-sm text-stone-600 mt-1">{plural(pending.length)}</p>
         </Card>
         <Card className="p-5 bg-emerald-50/40 border-emerald-100">
           <div className="flex items-center gap-3 mb-2">
             <CheckCircle2 className="text-emerald-700" size={20} />
             <p className="text-xs uppercase tracking-wider text-emerald-800">Remboursé</p>
           </div>
-          <p className="font-serif text-3xl text-stone-900">{formatEUR(totalCompleted)}</p>
-          <p className="text-sm text-stone-600 mt-1">{completed.length} dépense{completed.length > 1 ? 's' : ''}</p>
+          <p className="font-serif text-3xl text-stone-900 tabular-nums">{formatEUR(totalCompleted)}</p>
+          <p className="text-sm text-stone-600 mt-1">{plural(completed.length)}</p>
+        </Card>
+        <Card className="p-5">
+          <div className="flex items-center gap-3 mb-2">
+            <ScopeIcon className="text-stone-500" size={20} />
+            <p className="text-xs uppercase tracking-wider text-stone-500">{L.kpiTotal}</p>
+          </div>
+          <p className="font-serif text-3xl text-stone-900 tabular-nums">{formatEUR(totalPending + totalCompleted)}</p>
+          <p className="text-sm text-stone-600 mt-1">{plural(reimbursables.length)}</p>
         </Card>
       </div>
 
-      <Card className="p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-serif text-lg text-stone-900">En attente de remboursement</h3>
-          {reimbursables.length > 0 && (
-            <Button size="sm" onClick={openInvoice}>
-              <FileText size={14} /> Générer une facture
-            </Button>
-          )}
-        </div>
-        {pending.length === 0 ? (
-          <p className="text-stone-500 text-sm">Aucune dépense en attente.</p>
-        ) : (
+      {/* En attente par débiteur (rubrique « Créances ») */}
+      {duScope && personBreakdown.length > 0 && (
+        <Card className="p-5">
+          <h3 className="font-serif text-lg text-stone-900 mb-3">En attente par débiteur</h3>
           <div className="space-y-2">
-            {pending.map(t => (
-              <div key={t.id} className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl hover:bg-stone-100 transition">
-                <button onClick={() => toggleRembourse(t)} className="text-stone-400 hover:text-emerald-700 transition" title="Marquer remboursé">
-                  <Circle size={20} />
-                </button>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <p className="font-medium text-stone-900 truncate">{t.libelle}</p>
-                    {t.justificatif && (
-                      <button
-                        onClick={() => setViewingJustif(t.justificatif)}
-                        className="text-stone-500 hover:text-stone-900 transition shrink-0"
-                        title="Voir la facture jointe"
-                      >
-                        <Paperclip size={12} />
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-xs text-stone-500">{formatDateFR(t.date)}</p>
+            {personBreakdown.map(p => (
+              <div key={p.name} className="flex items-center gap-3">
+                <UserIcon size={14} className="text-stone-500 shrink-0" />
+                <span className="text-sm text-stone-700 w-28 md:w-36 truncate shrink-0">{p.name}</span>
+                <div className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full bg-amber-500" style={{ width: `${(p.total / personMax) * 100}%` }} />
                 </div>
-                <CatBadges ids={getCatIds(t)} categories={categories} max={2} />
-                <p className="font-serif text-lg text-stone-900">{formatEUR(Math.abs(t.montant))}</p>
+                <span className="text-sm font-medium tabular-nums text-stone-900 w-24 text-right shrink-0">{formatEUR(p.total)}</span>
               </div>
             ))}
           </div>
-        )}
-      </Card>
+        </Card>
+      )}
 
-      <Card className="p-5">
-        <h3 className="font-serif text-lg text-stone-900 mb-4">Remboursées</h3>
-        {completed.length === 0 ? (
-          <p className="text-stone-500 text-sm">Aucune dépense remboursée pour le moment.</p>
-        ) : (
+      {/* Répartition par catégorie (rubrique « Société ») */}
+      {!duScope && catBreakdown.length > 0 && (
+        <Card className="p-5">
+          <h3 className="font-serif text-lg text-stone-900 mb-3">Par catégorie</h3>
           <div className="space-y-2">
-            {completed.map(t => (
-              <div key={t.id} className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl opacity-60 hover:opacity-100 transition">
-                <button onClick={() => toggleRembourse(t)} className="text-emerald-700" title="Annuler le remboursement">
-                  <CheckCircle2 size={20} />
-                </button>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <p className="font-medium text-stone-900 truncate line-through">{t.libelle}</p>
-                    {t.justificatif && (
-                      <button
-                        onClick={() => setViewingJustif(t.justificatif)}
-                        className="text-stone-500 hover:text-stone-900 transition shrink-0"
-                        title="Voir la facture jointe"
-                      >
-                        <Paperclip size={12} />
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-xs text-stone-500">{formatDateFR(t.date)}</p>
+            {catBreakdown.map(c => (
+              <div key={c.id} className="flex items-center gap-3">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
+                <span className="text-sm text-stone-700 w-28 md:w-36 truncate shrink-0">{c.name}</span>
+                <div className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: `${(c.total / catMax) * 100}%`, backgroundColor: c.color }} />
                 </div>
-                <CatBadges ids={getCatIds(t)} categories={categories} max={2} />
-                <p className="font-serif text-lg text-stone-700">{formatEUR(Math.abs(t.montant))}</p>
+                <span className="text-sm font-medium tabular-nums text-stone-900 w-24 text-right shrink-0">{formatEUR(c.total)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Liste complète, regroupée par mois */}
+      <Card className="p-5">
+        <div className="flex items-center gap-2 flex-wrap mb-4">
+          <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
+            {[
+              { id: 'all', label: 'Tous', count: reimbursables.length },
+              { id: 'pending', label: 'En attente', count: pending.length },
+              { id: 'paid', label: 'Remboursés', count: completed.length },
+            ].map(f => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setStatusFilter(f.id)}
+                className={`no-touch-grow inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition ${
+                  statusFilter === f.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                {f.label}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  statusFilter === f.id ? 'bg-stone-100 text-stone-700' : 'bg-white text-stone-500'
+                }`}>{f.count}</span>
+              </button>
+            ))}
+          </div>
+          <div className="relative flex-1" style={{ minWidth: 180 }}>
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher…" className="pl-9" />
+          </div>
+          {listed.length > 0 && (
+            <p className="text-sm text-stone-600 tabular-nums ml-auto">
+              {plural(listed.length)} · <span className="font-medium text-stone-900">{formatEUR(listedTotal)}</span>
+            </p>
+          )}
+        </div>
+
+        {listed.length === 0 ? (
+          <p className="text-stone-500 text-sm py-4 text-center">
+            {reimbursables.length === 0 ? L.vide : 'Aucun résultat pour ce filtre.'}
+          </p>
+        ) : (
+          <div className="space-y-5">
+            {monthGroups.map(g => (
+              <div key={g.key}>
+                <div className="flex items-baseline justify-between gap-3 px-1 mb-1.5 flex-wrap">
+                  <p className="text-xs uppercase tracking-wider text-stone-500">{g.label} · {plural(g.txs.length)}</p>
+                  <p className="text-sm tabular-nums">
+                    <span className="font-medium text-stone-900">{formatEUR(g.total)}</span>
+                    {g.pending > 0 && <span className="text-amber-700 ml-2">dont {formatEUR(g.pending)} en attente</span>}
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  {g.txs.map(t => (
+                    <div key={t.id} className="group flex items-center gap-2 md:gap-3 p-3 bg-stone-50 rounded-xl hover:bg-stone-100 transition">
+                      <button
+                        onClick={() => toggleRembourse(t)}
+                        className={`shrink-0 transition ${regle(t) ? 'text-emerald-700' : 'text-stone-400 hover:text-emerald-700'}`}
+                        title={regle(t) ? 'Annuler le remboursement' : 'Marquer comme remboursé'}
+                      >
+                        {regle(t) ? <CheckCircle2 size={20} /> : <Circle size={20} />}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className={`font-medium truncate ${regle(t) ? 'text-stone-500' : 'text-stone-900'}`}>{t.libelle}</p>
+                          {t.justificatif && (
+                            <button
+                              onClick={() => setViewingJustif(t.justificatif)}
+                              className="no-touch-grow text-stone-500 hover:text-stone-900 transition shrink-0"
+                              title="Voir la facture jointe"
+                            >
+                              <Paperclip size={12} />
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-stone-500 mt-0.5 flex-wrap">
+                          <span>{formatDateFR(t.date)}</span>
+                          {duScope && debiteurDe(t) && <span className="font-medium text-stone-700">{debiteurDe(t)}</span>}
+                          {!regle(t) && recuPart(t) > 0 && (
+                            <span className="text-amber-700">reçu {formatEUR(recuPart(t))} · reste {formatEUR(reste(t))}</span>
+                          )}
+                          {duScope && t.type !== 'revenu' && amt(t) < Math.abs(t.montant) && (
+                            <span>sur {formatEUR(Math.abs(t.montant))}</span>
+                          )}
+                          {getCatIds(t).slice(0, 2).map(id => {
+                            const cat = categories.find(c => c.id === id);
+                            if (!cat) return null;
+                            return (
+                              <span key={id} className="inline-flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                                <span>{cat.name}</span>
+                              </span>
+                            );
+                          })}
+                          {getCatIds(t).length > 2 && <span className="text-stone-400">+{getCatIds(t).length - 2}</span>}
+                          {t.notes && <span className="truncate text-stone-400">· {t.notes}</span>}
+                        </div>
+                      </div>
+                      <span className={`hidden sm:inline-flex text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded shrink-0 ${
+                        regle(t) ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {regle(t) ? 'Remboursé' : (recuPart(t) > 0 ? 'Partiel' : 'En attente')}
+                      </span>
+                      <p className={`font-serif text-base md:text-lg tabular-nums shrink-0 text-right ${regle(t) ? 'text-stone-500' : 'text-stone-900'}`}>
+                        {formatEUR(amt(t))}
+                      </p>
+                      <div className="flex opacity-100 md:opacity-0 md:group-hover:opacity-100 transition shrink-0">
+                        <button
+                          onClick={() => onEdit && onEdit(t)}
+                          className="p-1.5 rounded-lg text-stone-600 hover:bg-white hover:text-stone-900 transition"
+                          title="Modifier"
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                        <button
+                          onClick={() => onDelete && onDelete(t.id)}
+                          className="p-1.5 rounded-lg text-rose-600 hover:bg-white transition"
+                          title="Supprimer"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
@@ -2520,7 +3301,7 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="text-sm font-medium text-stone-900 truncate">{t.libelle}</p>
-                        {t.rembourse ? (
+                        {regle(t) ? (
                           <span className="inline-flex items-center gap-0.5 text-[9px] uppercase tracking-wider font-medium px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 shrink-0">
                             <CheckCircle2 size={8} /> Reçu
                           </span>
@@ -2535,7 +3316,7 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
                       </div>
                       <p className="text-xs text-stone-500">{formatDateFR(t.date)}</p>
                     </div>
-                    <p className="font-serif text-base text-stone-900 tabular-nums">{formatEUR(Math.abs(t.montant))}</p>
+                    <p className="font-serif text-base text-stone-900 tabular-nums">{formatEUR(docAmt(t))}</p>
                   </label>
                 );
               })}
@@ -2581,6 +3362,489 @@ const ReimbursableView = ({ transactions, categories, onUpdate }) => {
 };
 
 // ============================================================
+// AFFAIRES — achat-revente par projet
+// ============================================================
+// Vue dédiée aux transactions de la catégorie « Affaires » (elles restent par ailleurs
+// des transactions ordinaires, visibles dans les autres rubriques).
+// Dépense = achat ou frais ; revenu = vente, avec acheteur (`acheteur`), quantité
+// (`quantite`), réduction (`reduction`), encaissement (`recu`) et montant déjà reçu
+// (`dejaRecu`). Une vente peut être à 0 €. Un achat peut porter une quantité achetée.
+// Le projet (`affaire`) est facultatif ; son taux de marge visé est stocké à part
+// (projetsMeta) et donne la marge espérée et le CA recherché :
+//   marge espérée = achats × taux ; CA recherché = achats + marge espérée.
+
+const SANS_PROJET = 'Sans projet';
+
+// Petit indicateur (libellé + valeur) de l'en-tête d'un projet
+const AffStat = ({ label, tone = 'text-stone-900', labelTone = 'text-stone-500', children }) => (
+  <div>
+    <p className={`text-[10px] uppercase tracking-wider ${labelTone}`}>{label}</p>
+    <div className={`font-serif text-base tabular-nums ${tone}`}>{children}</div>
+  </div>
+);
+
+const AffairesView = ({ transactions, categories, affaireCatIds = [], projetsMeta = {}, onSetTauxMarge, onUpdate, onEdit, onDelete, onAdd }) => {
+  const all = transactions.filter(t => !isSociete(t) && isAffaire(t, affaireCatIds));
+  const [projetFilter, setProjetFilter] = useState('all');
+  const [acheteurFilter, setAcheteurFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all'); // all | paid | pending (ventes)
+  const [search, setSearch] = useState('');
+  const [viewingJustif, setViewingJustif] = useState(null);
+  const [tauxEdit, setTauxEdit] = useState(null); // { nom, valeur } pendant la saisie du taux
+
+  const abs = (t) => Math.abs(Number(t.montant) || 0);
+  const isVente = (t) => t.type === 'revenu';
+  // Une vente à 0 € n'a rien à encaisser
+  const encaisse = (t) => t.recu !== false || abs(t) === 0;
+  const reste = (t) => (encaisse(t) ? 0 : Math.max(0, abs(t) - dejaRecu(t)));
+  const qte = (t) => { const n = Number(t.quantite); return n > 0 ? n : 0; };
+  const nomProjet = (t) => (t.affaire || '').trim() || SANS_PROJET;
+  const nomAcheteur = (t) => (t.acheteur || '').trim();
+  const sortFr = (arr) => arr.sort((a, b) => a.localeCompare(b, 'fr'));
+  // Taux de marge visé, en % du coût d'achat (reprise d'une ancienne marge espérée saisie en €)
+  const tauxDe = (nom, achats) => {
+    const m = projetsMeta[nom] || {};
+    const t = Number(m.tauxMarge);
+    if (t > 0) return t;
+    const ancienne = Number(m.margeEsperee);
+    return ancienne > 0 && achats > 0 ? (ancienne / achats) * 100 : 0;
+  };
+  const formatTaux = (t) => `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(t)} %`;
+
+  const projetsNoms = sortFr(Array.from(new Set(all.map(nomProjet))));
+  const activeProjet = projetsNoms.includes(projetFilter) ? projetFilter : 'all';
+  // Périmètre des indicateurs : le projet sélectionné, ou tous
+  const scoped = all.filter(t => activeProjet === 'all' || nomProjet(t) === activeProjet);
+  const acheteursNoms = sortFr(Array.from(new Set(scoped.filter(isVente).map(nomAcheteur).filter(Boolean))));
+  const activeAcheteur = acheteursNoms.includes(acheteurFilter) ? acheteurFilter : 'all';
+
+  const sum = (arr, f = abs) => arr.reduce((s, t) => s + f(t), 0);
+  const totalAchats = sum(scoped.filter(t => !isVente(t)));
+  const totalVentes = sum(scoped.filter(isVente));
+  const totalAttente = sum(scoped.filter(isVente), reste);
+  const nbAttente = scoped.filter(t => isVente(t) && reste(t) > 0).length;
+  const marge = totalVentes - totalAchats;
+
+  // Lignes listées : les filtres acheteur / encaissement / recherche ne touchent que la liste,
+  // les totaux d'un projet restent calculés sur le projet entier.
+  const q = search.trim().toLowerCase();
+  const matches = (t) => {
+    if (activeAcheteur !== 'all' && !(isVente(t) && nomAcheteur(t) === activeAcheteur)) return false;
+    if (statusFilter !== 'all' && !(isVente(t) && (statusFilter === 'paid') === (reste(t) === 0))) return false;
+    if (q && ![t.libelle, t.notes, t.affaire, t.acheteur].some(v => (v || '').toLowerCase().includes(q))) return false;
+    return true;
+  };
+  const filtering = activeAcheteur !== 'all' || statusFilter !== 'all' || !!q;
+
+  const projets = projetsNoms
+    .filter(nom => activeProjet === 'all' || nom === activeProjet)
+    .map(nom => {
+      const txs = all.filter(t => nomProjet(t) === nom).sort((a, b) => b.date.localeCompare(a.date));
+      const ventes = txs.filter(isVente);
+      const achats = txs.filter(t => !isVente(t));
+      const totAchats = sum(achats);
+      const totVentes = sum(ventes);
+      const taux = nom === SANS_PROJET ? 0 : tauxDe(nom, totAchats);
+      const esperee = totAchats * taux / 100;
+      const caRecherche = taux > 0 ? totAchats + esperee : 0;
+      // Unités : possédées = quantités saisies sur les achats ; vendues = quantités des ventes (1 par défaut)
+      const possedees = achats.reduce((s, t) => s + qte(t), 0);
+      const vendues = ventes.reduce((s, t) => s + (qte(t) || 1), 0);
+      const restantes = Math.max(0, possedees - vendues);
+      const caManquant = caRecherche - totVentes;
+      return {
+        nom,
+        lignes: txs.filter(matches),
+        nbAchats: achats.length,
+        nbVentes: ventes.length,
+        achats: totAchats,
+        ventes: totVentes,
+        attente: sum(ventes, reste),
+        taux,
+        esperee,
+        caRecherche,
+        possedees,
+        vendues,
+        restantes,
+        caAtteint: caRecherche > 0 && caManquant <= 0,
+        // prix moyen à obtenir sur chaque unité restante pour atteindre le CA recherché
+        prixCible: caRecherche > 0 && caManquant > 0 && restantes > 0 ? caManquant / restantes : 0,
+        dernier: txs[0] ? txs[0].date : '',
+      };
+    })
+    .filter(p => !filtering || p.lignes.length > 0)
+    .sort((a, b) => b.dernier.localeCompare(a.dernier));
+  const totalEsperee = projets.reduce((s, p) => s + p.esperee, 0);
+  const totalCaRecherche = projets.reduce((s, p) => s + p.caRecherche, 0);
+
+  // Synthèse par acheteur (sur le périmètre des indicateurs)
+  const acheteurs = (() => {
+    const map = {};
+    scoped.filter(isVente).forEach(t => {
+      const nom = nomAcheteur(t) || 'Non précisé';
+      if (!map[nom]) map[nom] = { nom, total: 0, attente: 0, nb: 0 };
+      map[nom].total += abs(t);
+      map[nom].nb += 1;
+      map[nom].attente += reste(t);
+    });
+    return Object.values(map).sort((a, b) => b.total - a.total);
+  })();
+  const acheteurMax = Math.max(...acheteurs.map(a => a.total), 1);
+
+  const signed = (n) => `${n >= 0 ? '+' : '−'}${formatEUR(Math.abs(n))}`;
+  const chipClass = (active) => `no-touch-grow inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition whitespace-nowrap ${
+    active ? 'bg-stone-900 text-white border-stone-900' : 'bg-white text-stone-700 border-stone-200 hover:border-stone-400'
+  }`;
+
+  const saveTaux = () => {
+    if (!tauxEdit) return;
+    const v = parseFloat(String(tauxEdit.valeur).replace(',', '.').replace('%', ''));
+    if (onSetTauxMarge) onSetTauxMarge(tauxEdit.nom, v > 0 ? Math.round(v * 100) / 100 : 0);
+    setTauxEdit(null);
+  };
+
+  // Encaissement complet d'une vente (le montant partiel déjà reçu n'a alors plus d'objet)
+  const toggleEncaisse = (t) => {
+    const { dejaRecu: _partiel, ...rest } = t;
+    onUpdate(encaisse(t) ? { ...t, recu: false } : { ...rest, recu: true });
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* En-tête de la rubrique */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-stone-900 flex items-center justify-center shrink-0">
+              <Briefcase className="text-stone-50" size={18} />
+            </div>
+            <h2 className="font-serif text-xl text-stone-900 whitespace-nowrap">Affaires</h2>
+          </div>
+          <div className="flex gap-2 shrink-0 ml-auto">
+            <Button size="sm" onClick={() => onAdd && onAdd(activeProjet === 'all' || activeProjet === SANS_PROJET ? '' : activeProjet)}>
+              <Plus size={14} /> Ajouter
+            </Button>
+          </div>
+        </div>
+        {projetsNoms.length > 1 && (
+          <div className="flex flex-wrap gap-1.5 mt-4">
+            <button type="button" onClick={() => setProjetFilter('all')} className={chipClass(activeProjet === 'all')}>
+              Tous les projets
+            </button>
+            {projetsNoms.map(nom => (
+              <button key={nom} type="button" onClick={() => setProjetFilter(nom)} className={chipClass(activeProjet === nom)}>
+                {nom}
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Indicateurs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+        <Card className="p-5">
+          <p className="text-xs uppercase tracking-wider text-stone-500">Achats</p>
+          <p className="font-serif text-2xl md:text-3xl text-stone-900 tabular-nums mt-1">{formatEUR(totalAchats)}</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs uppercase tracking-wider text-emerald-700">Ventes</p>
+          <p className="font-serif text-2xl md:text-3xl text-emerald-700 tabular-nums mt-1">{formatEUR(totalVentes)}</p>
+          {totalCaRecherche > 0 && (
+            <p className="text-sm text-stone-600 mt-1 tabular-nums">CA recherché {formatEUR(totalCaRecherche)}</p>
+          )}
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs uppercase tracking-wider text-stone-500">Marge</p>
+          <p className={`font-serif text-2xl md:text-3xl tabular-nums mt-1 ${marge >= 0 ? 'text-stone-900' : 'text-rose-700'}`}>{signed(marge)}</p>
+          {totalEsperee > 0 && (
+            <p className="text-sm text-stone-600 mt-1 tabular-nums">espérée {signed(totalEsperee)}</p>
+          )}
+        </Card>
+        <Card className="p-5 bg-amber-50/40 border-amber-100">
+          <p className="text-xs uppercase tracking-wider text-amber-800">À encaisser</p>
+          <p className="font-serif text-2xl md:text-3xl text-stone-900 tabular-nums mt-1">{formatEUR(totalAttente)}</p>
+          <p className="text-sm text-stone-600 mt-1">{nbAttente} vente{nbAttente > 1 ? 's' : ''}</p>
+        </Card>
+      </div>
+
+      {/* Acheteurs */}
+      {acheteurs.length > 0 && (
+        <Card className="p-5">
+          <h3 className="font-serif text-lg text-stone-900 mb-3">Acheteurs</h3>
+          <div className="space-y-1">
+            {acheteurs.map(a => {
+              const selectable = a.nom !== 'Non précisé';
+              const active = activeAcheteur === a.nom;
+              return (
+                <button
+                  key={a.nom}
+                  type="button"
+                  disabled={!selectable}
+                  onClick={() => setAcheteurFilter(active ? 'all' : a.nom)}
+                  aria-pressed={active}
+                  className={`w-full flex items-center gap-3 px-2 py-1.5 rounded-lg text-left transition ${active ? 'bg-stone-100' : 'hover:bg-stone-50'}`}
+                >
+                  <UserIcon size={14} className="text-stone-500 shrink-0" />
+                  <span className="text-sm text-stone-700 w-24 md:w-36 truncate shrink-0">{a.nom}</span>
+                  <span className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden flex">
+                    <span className="h-full bg-emerald-600" style={{ width: `${((a.total - a.attente) / acheteurMax) * 100}%` }} />
+                    <span className="h-full bg-amber-500" style={{ width: `${(a.attente / acheteurMax) * 100}%` }} />
+                  </span>
+                  <span className="text-sm tabular-nums text-right shrink-0">
+                    <span className="font-medium text-stone-900">{formatEUR(a.total)}</span>
+                    {a.attente > 0 && <span className="block text-xs text-amber-700">{formatEUR(a.attente)} en attente</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Filtres de la liste */}
+      {all.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
+            {[
+              { id: 'all', label: 'Tout' },
+              { id: 'paid', label: 'Encaissé' },
+              { id: 'pending', label: 'En attente' },
+            ].map(f => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setStatusFilter(f.id)}
+                className={`no-touch-grow px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition ${
+                  statusFilter === f.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <div className="relative flex-1" style={{ minWidth: 180 }}>
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher…" className="pl-9" />
+          </div>
+        </div>
+      )}
+
+      {/* Projets */}
+      {all.length === 0 ? (
+        <Card className="p-5">
+          <p className="text-stone-500 text-sm py-4 text-center">Aucune affaire enregistrée pour le moment.</p>
+        </Card>
+      ) : projets.length === 0 ? (
+        <Card className="p-5">
+          <p className="text-stone-500 text-sm py-4 text-center">Aucun résultat pour ce filtre.</p>
+        </Card>
+      ) : projets.map(p => {
+        const margeProjet = p.ventes - p.achats;
+        const editing = tauxEdit && tauxEdit.nom === p.nom;
+        const startEdit = () => setTauxEdit({ nom: p.nom, valeur: p.taux > 0 ? String(Math.round(p.taux * 100) / 100).replace('.', ',') : '' });
+        return (
+          <Card key={p.nom} className="p-5">
+            <div className="flex items-start justify-between gap-x-6 gap-y-3 flex-wrap mb-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-serif text-lg text-stone-900">{p.nom}</h3>
+                  {p.attente > 0 && (
+                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                      <Clock size={9} /> {formatMontantCourt(p.attente)} à encaisser
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  {p.nbAchats} achat{p.nbAchats > 1 ? 's' : ''} · {p.nbVentes} vente{p.nbVentes > 1 ? 's' : ''}
+                </p>
+              </div>
+              <div className="flex items-start gap-x-5 gap-y-2 flex-wrap justify-end text-right ml-auto">
+                <AffStat label="Achats">{formatEUR(p.achats)}</AffStat>
+                <AffStat label="Ventes" tone="text-emerald-700" labelTone="text-emerald-700">{formatEUR(p.ventes)}</AffStat>
+                {p.caRecherche > 0 && <AffStat label="CA recherché">{formatEUR(p.caRecherche)}</AffStat>}
+                <AffStat label="Marge" tone={margeProjet >= 0 ? 'text-stone-900' : 'text-rose-700'}>{signed(margeProjet)}</AffStat>
+                {p.nom !== SANS_PROJET && (
+                  <AffStat label="Marge espérée">
+                    {p.taux > 0 ? (
+                      <button
+                        type="button"
+                        onClick={startEdit}
+                        title="Modifier le taux de marge"
+                        className="no-touch-grow inline-flex items-center gap-1.5 hover:text-stone-600 transition"
+                      >
+                        {signed(p.esperee)}
+                        <span className="font-sans text-xs text-stone-500">{formatTaux(p.taux)}</span>
+                        <Pencil size={11} className="text-stone-400" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={startEdit}
+                        className="no-touch-grow inline-flex items-center gap-1 font-sans text-sm text-stone-500 hover:text-stone-900 transition"
+                      >
+                        <Plus size={12} /> Taux
+                      </button>
+                    )}
+                  </AffStat>
+                )}
+              </div>
+            </div>
+
+            {/* Saisie du taux de marge visé */}
+            {editing && (
+              <div className="flex items-center gap-2 flex-wrap mb-4 justify-end">
+                <span className="text-xs uppercase tracking-wider text-stone-500">Taux de marge (%)</span>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={tauxEdit.valeur}
+                  onChange={(e) => setTauxEdit({ nom: p.nom, valeur: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveTaux(); if (e.key === 'Escape') setTauxEdit(null); }}
+                  placeholder="30"
+                  autoFocus
+                  style={{ width: 96 }}
+                />
+                <Button size="sm" onClick={saveTaux}><Check size={14} /> OK</Button>
+                <Button size="sm" variant="ghost" onClick={() => setTauxEdit(null)}>Annuler</Button>
+              </div>
+            )}
+
+            {/* Progression vers le CA recherché et unités vendues / possédées */}
+            {(p.caRecherche > 0 || p.possedees > 0 || p.vendues > 0) && (
+              <div className="mb-4 space-y-2">
+                {p.caRecherche > 0 && (
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${p.caAtteint ? 'bg-emerald-600' : 'bg-stone-900'}`}
+                        style={{ width: `${Math.max(0, Math.min(100, (p.ventes / p.caRecherche) * 100))}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-stone-600 tabular-nums shrink-0">
+                      {Math.round((p.ventes / p.caRecherche) * 100)} % du CA recherché
+                    </span>
+                  </div>
+                )}
+                {(p.possedees > 0 || p.vendues > 0) && (
+                  <p className="text-sm text-stone-600 tabular-nums">
+                    {p.possedees > 0 ? (
+                      <>
+                        <span className="font-medium text-stone-900">
+                          {formatMontantCourt(p.vendues, false)} / {formatMontantCourt(p.possedees, false)}
+                        </span>{' '}
+                        unité{p.possedees > 1 ? 's' : ''} vendue{p.possedees > 1 ? 's' : ''}
+                        {p.restantes > 0 && <> · {formatMontantCourt(p.restantes, false)} restante{p.restantes > 1 ? 's' : ''}</>}
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium text-stone-900">{formatMontantCourt(p.vendues, false)}</span>{' '}
+                        unité{p.vendues > 1 ? 's' : ''} vendue{p.vendues > 1 ? 's' : ''}
+                      </>
+                    )}
+                    {p.prixCible > 0 && (
+                      <> · à vendre <span className="font-medium text-stone-900">{formatEUR(p.prixCible)}</span> l'unité pour le CA recherché</>
+                    )}
+                    {p.caAtteint && <> · <span className="text-emerald-700 font-medium">CA recherché atteint</span></>}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              {p.lignes.map(t => {
+                const vente = isVente(t);
+                const ok = encaisse(t);
+                const gratuit = vente && abs(t) === 0;
+                const partiel = vente && !ok && dejaRecu(t) > 0;
+                const reduction = Number(t.reduction) > 0 ? Number(t.reduction) : 0;
+                return (
+                  <div key={t.id} className="group flex items-center gap-2 md:gap-3 p-3 bg-stone-50 rounded-xl hover:bg-stone-100 transition">
+                    {vente && !gratuit ? (
+                      <button
+                        onClick={() => toggleEncaisse(t)}
+                        className={`shrink-0 transition ${ok ? 'text-emerald-700' : 'text-stone-400 hover:text-emerald-700'}`}
+                        title={ok ? 'Marquer comme non encaissé' : 'Marquer comme encaissé'}
+                      >
+                        {ok ? <CheckCircle2 size={20} /> : <Circle size={20} />}
+                      </button>
+                    ) : (
+                      <span className="shrink-0 w-5 flex justify-center text-stone-400">
+                        {vente ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
+                      </span>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-medium text-stone-900 truncate">{t.libelle}</p>
+                        {t.justificatif && (
+                          <button
+                            onClick={() => setViewingJustif(t.justificatif)}
+                            className="no-touch-grow text-stone-500 hover:text-stone-900 transition shrink-0"
+                            title="Voir la facture jointe"
+                          >
+                            <Paperclip size={12} />
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-stone-500 mt-0.5 flex-wrap">
+                        <span>{formatDateFR(t.date)}</span>
+                        <span>{vente ? 'Vente' : 'Achat'}</span>
+                        {qte(t) > 0 && <span className="font-medium text-stone-700">× {formatMontantCourt(qte(t), false)}</span>}
+                        {vente && nomAcheteur(t) && <span className="font-medium text-stone-700">{nomAcheteur(t)}</span>}
+                        {vente && reduction > 0 && <span>réduction {formatEUR(reduction)}</span>}
+                        {partiel && <span className="text-amber-700">reçu {formatEUR(dejaRecu(t))} · reste {formatEUR(reste(t))}</span>}
+                        {t.notes && <span className="truncate text-stone-400">· {t.notes}</span>}
+                      </div>
+                    </div>
+                    {vente && !gratuit && (
+                      <span className={`hidden sm:inline-flex text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded shrink-0 ${
+                        ok ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {ok ? 'Encaissé' : (partiel ? 'Partiel' : 'En attente')}
+                      </span>
+                    )}
+                    <p className={`font-serif text-base md:text-lg tabular-nums shrink-0 text-right ${vente ? 'text-emerald-700' : 'text-stone-900'}`}>
+                      {vente ? '+' : '−'}{formatEUR(abs(t))}
+                    </p>
+                    <div className="flex opacity-100 md:opacity-0 md:group-hover:opacity-100 transition shrink-0">
+                      <button
+                        onClick={() => onEdit && onEdit(t)}
+                        className="p-1.5 rounded-lg text-stone-600 hover:bg-white hover:text-stone-900 transition"
+                        title="Modifier"
+                      >
+                        <Edit2 size={14} />
+                      </button>
+                      <button
+                        onClick={() => onDelete && onDelete(t.id)}
+                        className="p-1.5 rounded-lg text-rose-600 hover:bg-white transition"
+                        title="Supprimer"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-3">
+              <Button size="sm" variant="ghost" onClick={() => onAdd && onAdd(p.nom === SANS_PROJET ? '' : p.nom)}>
+                <Plus size={14} /> Ajouter à ce projet
+              </Button>
+            </div>
+          </Card>
+        );
+      })}
+
+      <JustificatifViewer
+        open={!!viewingJustif}
+        onClose={() => setViewingJustif(null)}
+        justificatif={viewingJustif}
+      />
+    </div>
+  );
+};
+
+// ============================================================
 // ANALYSE PAR CATÉGORIE
 // ============================================================
 
@@ -2594,10 +3858,8 @@ const CategoryAnalytics = ({ transactions, categories, tab, period }) => {
     return null;
   }, [period]);
 
-  // Note : le filtrage des remboursables (selon les boutons société/proximité de
-  // l'en-tête) est déjà appliqué en amont via passReimbFilter dans App.
-  // On ne refiltre PAS ici : ainsi, quand l'utilisateur affiche "tout" (vert),
-  // les dépenses remboursées sont bien comptées dans les statistiques.
+  // Note : les frais de société et les montants dus par des tiers sont déjà retirés
+  // en amont (visibleTransactions dans App). On ne refiltre pas ici.
   const filtered = useMemo(() => transactions.filter(t => {
     if (tab !== 'all' && t.type !== tab) return false;
     if (periodFilter && new Date(t.date) < periodFilter) return false;
@@ -3071,12 +4333,7 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
                       <Paperclip size={12} />
                     </button>
                   )}
-                  {t.remboursable && (
-                    <span className={`text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded shrink-0
-                      ${t.rembourse ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {t.rembourse ? 'Remb.' : 'En att.'}
-                    </span>
-                  )}
+                  <DuBadge t={t} />
                   {t.type === 'revenu' && t.recu === false && (
                     <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 shrink-0">
                       <Clock size={9} /> Attente
@@ -3138,7 +4395,7 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
 // TABLEAU DE BORD
 // ============================================================
 
-const Dashboard = ({ transactions, categories, allTransactions }) => {
+const Dashboard = ({ transactions, categories, allTransactions, societePending = 0, societeCount = 0, onOpenSociete, affaireCatIds = [] }) => {
   const today = new Date();
   const monthStart = startOfMonth(today);
   const monthEnd = startOfMonth(addMonths(today, 1));
@@ -3163,10 +4420,11 @@ const Dashboard = ({ transactions, categories, allTransactions }) => {
     .filter(t => t.type === 'dépense' && !t.remboursable)
     .reduce((s, t) => s + Math.abs(t.montant), 0);
 
-  // Pending de remboursement (sur tout le registre, indépendant du masquage)
+  // Ce que les autres me doivent encore (les frais de société sont exclus en amont
+  // et suivis dans leur propre rubrique)
   const pendingReimb = (allTransactions || transactions)
-    .filter(t => t.remboursable && !t.rembourse)
-    .reduce((s, t) => s + Math.abs(t.montant), 0);
+    .filter(t => isDu(t, affaireCatIds) && !isDuRegle(t))
+    .reduce((s, t) => s + Math.max(0, montantDu(t, affaireCatIds) - dejaRecu(t)), 0);
 
   const balance = revenue - netExpenses;
 
@@ -3237,7 +4495,7 @@ const Dashboard = ({ transactions, categories, allTransactions }) => {
               if (pendingRevs.length === 0) {
                 return <>{revs.length} entrée{revs.length > 1 ? 's' : ''}</>;
               }
-              const pendingTotal = pendingRevs.reduce((s, t) => s + Math.abs(t.montant), 0);
+              const pendingTotal = pendingRevs.reduce((s, t) => s + Math.max(0, Math.abs(t.montant) - dejaRecu(t)), 0);
               return (
                 <span className="inline-flex items-center gap-1">
                   <Clock size={11} className="text-amber-700" />
@@ -3270,9 +4528,27 @@ const Dashboard = ({ transactions, categories, allTransactions }) => {
         <Card className="p-4 bg-amber-50/40 border-amber-100">
           <p className="text-xs uppercase tracking-wider text-amber-800">À recevoir</p>
           <p className="font-serif text-2xl text-stone-900 mt-1 tabular-nums">{formatEUR(pendingReimb)}</p>
-          <p className="text-xs text-stone-500 mt-1">Remboursements en attente</p>
+          <p className="text-xs text-stone-500 mt-1">Créances en attente</p>
         </Card>
       </div>
+
+      {/* Rappel discret du registre Société : hors des chiffres personnels ci-dessus */}
+      {societePending > 0 && (
+        <button type="button" onClick={onOpenSociete} className="block w-full text-left">
+          <Card className="p-4 flex items-center gap-3 hover:border-stone-300 transition">
+            <div className="w-9 h-9 rounded-lg bg-stone-100 flex items-center justify-center shrink-0">
+              <Building2 size={16} className="text-stone-700" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-stone-900">
+                Frais de société en attente : <span className="tabular-nums">{formatEUR(societePending)}</span>
+                <span className="font-normal text-stone-500"> · {societeCount} frais</span>
+              </p>
+            </div>
+            <ChevronRight size={16} className="text-stone-400 shrink-0" />
+          </Card>
+        </button>
+      )}
 
       {/* Mini graphique + récents */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -3725,13 +5001,20 @@ export default function App() {
 
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  // Données propres aux projets d'affaires : { [nom du projet]: { tauxMarge } } (taux en % du coût d'achat)
+  const [projetsMeta, setProjetsMeta] = useState({});
+  const setTauxMarge = (nom, taux) => setProjetsMeta(prev => {
+    const next = { ...prev };
+    const { margeEsperee: _ancienne, ...reste } = next[nom] || {};
+    if (taux > 0) next[nom] = { ...reste, tauxMarge: taux };
+    else delete next[nom];
+    return next;
+  });
   const [view, setView] = useState('dashboard');
   const [showTxForm, setShowTxForm] = useState(false);
   const [editingTx, setEditingTx] = useState(null);
   const [defaultDate, setDefaultDate] = useState(null);
   const [showImport, setShowImport] = useState(false);
-  const [showSociete, setShowSociete] = useState('hide');
-  const [showProximite, setShowProximite] = useState('hide');
   // Transaction pré-remplie depuis les paramètres d'URL (?action=add&montant=...&libelle=...)
   // Sert à l'automatisation iOS via Raccourcis : on ouvre l'URL, le formulaire s'ouvre déjà rempli.
   const [prefillTx, setPrefillTx] = useState(null);
@@ -3845,20 +5128,100 @@ export default function App() {
 
   const isGistConnected = !!(gistToken && gistId);
 
-  // Filtre une transaction selon son statut remboursable et le réglage actif
-  const passReimbFilter = useCallback((t) => {
-    if (!t.remboursable) return true; // dépenses normales toujours visibles
-    const type = t.remboursableType || 'societe';
-    const setting = type === 'proximite' ? showProximite : showSociete;
-    if (setting === 'hide') return false;
-    if (setting === 'pending') return !t.rembourse;
-    return true; // 'all'
-  }, [showSociete, showProximite]);
+  // Les frais de société forment un registre à part : exclus de toutes les vues
+  // personnelles, ils ne sont visibles que dans la rubrique « Société ».
+  const personalTransactions = useMemo(() => transactions.filter(t => !isSociete(t)), [transactions]);
+  // Catégorie(s) « Affaires », et projets / acheteurs déjà saisis (suggestions du formulaire)
+  const affaireCatIds = useMemo(() => categories.filter(isAffaireCat).map(c => c.id), [categories]);
+  const uniqSorted = (values) => Array.from(new Set(values.map(v => (v || '').trim()).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, 'fr'));
+  const projets = useMemo(() => uniqSorted(transactions.map(t => t.affaire)), [transactions]);
+  const acheteurs = useMemo(() => uniqSorted(transactions.map(t => t.acheteur)), [transactions]);
+  const societePendingTxs = useMemo(() => transactions.filter(t => isSociete(t) && !t.rembourse), [transactions]);
+  const societePending = societePendingTxs.reduce((sum, t) => sum + Math.max(0, Math.abs(t.montant) - dejaRecu(t)), 0);
 
-  const visibleTransactions = useMemo(() =>
-    transactions.filter(passReimbFilter),
-    [transactions, passReimbFilter]
-  );
+  // Vues personnelles : une dépense dont une partie est due par un tiers n'y compte que
+  // pour ma part ; si elle est due en totalité, elle n'apparaît que dans « Créances ».
+  // Les copies portent _du / _duRegle / _total pour l'affichage ; l'édition repart
+  // toujours de la transaction d'origine (voir startEdit).
+  const visibleTransactions = useMemo(() => personalTransactions.map(t => {
+    if (!isProximite(t)) return t;
+    const total = Math.abs(Number(t.montant) || 0);
+    const du = montantDu(t);
+    const part = Math.round((total - du) * 100) / 100;
+    if (part <= 0) return null;
+    return { ...t, montant: -part, remboursable: false, _du: du, _duRegle: !!t.rembourse, _total: total };
+  }).filter(Boolean), [personalTransactions]);
+
+  // Débiteurs déjà saisis (suggestions du formulaire)
+  const personnes = useMemo(() => Array.from(new Set(
+    transactions.map(t => (t.duPar || '').trim()).filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b, 'fr')), [transactions]);
+
+  const startEdit = (t) => {
+    setEditingTx(transactions.find(x => x.id === t.id) || t);
+    setShowTxForm(true);
+  };
+
+  // Ouvre le formulaire d'ajout déjà rattaché au bon registre (Société ou Créances)
+  // Ouvre le formulaire d'ajout avec la catégorie « Affaires » cochée (créée si elle
+  // n'existe pas encore) et le projet pré-rempli s'il est connu
+  const openAffaireForm = (projet = '') => {
+    let cat = categories.find(isAffaireCat);
+    if (!cat) {
+      cat = { id: 'cat_affaires', name: 'Affaires', color: '#b5935a' };
+      const created = cat;
+      setCategories(prev => (prev.some(isAffaireCat) ? prev : [...prev, created]));
+    }
+    setEditingTx(null);
+    setDefaultDate(null);
+    setPrefillTx({
+      id: uuid(),
+      date: toISODate(new Date()),
+      libelle: '',
+      montant: '',
+      type: 'dépense',
+      categorieIds: [cat.id],
+      remboursable: false,
+      remboursableType: 'societe',
+      rembourse: false,
+      recu: true,
+      justificatif: null,
+      notes: '',
+      montantDu: '',
+      duPar: '',
+      dette: false,
+      affaire: projet,
+      acheteur: '',
+    });
+    setShowTxForm(true);
+  };
+
+  const openRegistreForm = (remboursableType) => {
+    const defaultCat = (remboursableType === 'societe' && categories.find(c => c.id === 'cat_travail'))
+      || categories.find(c => c.id !== 'cat_revenu')
+      || categories[0];
+    setEditingTx(null);
+    setDefaultDate(null);
+    setPrefillTx({
+      id: uuid(),
+      date: toISODate(new Date()),
+      libelle: '',
+      montant: '',
+      type: 'dépense',
+      categorieIds: defaultCat ? [defaultCat.id] : [],
+      remboursable: true,
+      remboursableType,
+      rembourse: false,
+      recu: true,
+      justificatif: null,
+      notes: '',
+      montantDu: '',
+      duPar: '',
+      dette: false,
+    });
+    setShowTxForm(true);
+  };
 
   // Réaffectation lors de la suppression d'une catégorie
   useEffect(() => {
@@ -3961,6 +5324,7 @@ export default function App() {
         if (cancelled) return;
         if (content?.transactions) setTransactions(content.transactions);
         if (content?.categories) setCategories(content.categories);
+        setProjetsMeta(content?.affaires || {});
         setLastSyncAt(updatedAt);
         setSyncStatus('saved');
       })
@@ -3987,6 +5351,7 @@ export default function App() {
         savedAt: new Date().toISOString(),
         transactions,
         categories,
+        affaires: projetsMeta,
       };
       gistApi.update(gistToken, gistId, payload)
         .then(data => {
@@ -4002,7 +5367,7 @@ export default function App() {
 
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transactions, categories, gistToken, gistId]);
+  }, [transactions, categories, projetsMeta, gistToken, gistId]);
 
   // ===== Actions Gist =====
   const connectGist = async (newToken) => {
@@ -4020,6 +5385,7 @@ export default function App() {
         const { content, updatedAt } = await gistApi.read(newToken, id);
         if (content?.transactions) setTransactions(content.transactions);
         if (content?.categories) setCategories(content.categories);
+        setProjetsMeta(content?.affaires || {});
         setLastSyncAt(updatedAt);
       } else {
         // Crée un nouveau gist avec les données actuelles
@@ -4028,6 +5394,7 @@ export default function App() {
           savedAt: new Date().toISOString(),
           transactions,
           categories,
+          affaires: projetsMeta,
         };
         const created = await gistApi.create(newToken, payload);
         id = created.id;
@@ -4068,6 +5435,7 @@ export default function App() {
       const { content, updatedAt } = await gistApi.read(gistToken, gistId);
       if (content?.transactions) setTransactions(content.transactions);
       if (content?.categories) setCategories(content.categories);
+        setProjetsMeta(content?.affaires || {});
       setLastSyncAt(updatedAt);
       setSyncStatus('saved');
     } catch (err) {
@@ -4108,6 +5476,7 @@ export default function App() {
       exportedAt: new Date().toISOString(),
       transactions,
       categories,
+      affaires: projetsMeta,
     };
     const json = JSON.stringify(data, null, 2);
     const filename = `finances-${toISODate(new Date())}.json`;
@@ -4158,6 +5527,7 @@ export default function App() {
         if (!data.version) throw new Error('Format invalide');
         if (data.transactions) setTransactions(data.transactions);
         if (data.categories) setCategories(data.categories);
+        setProjetsMeta(data.affaires || {});
         alert(`Import réussi : ${data.transactions?.length || 0} transaction(s), ${data.categories?.length || 0} catégorie(s).`);
       } catch (err) {
         alert('Erreur lors de l\'import : ' + err.message);
@@ -4167,12 +5537,14 @@ export default function App() {
   };
 
   const navItems = [
-    { id: 'dashboard', label: 'Tableau de bord', icon: Home },
+    { id: 'dashboard', label: 'Tableau de bord', short: 'Accueil', icon: Home },
     { id: 'times', label: 'Analyses', icon: BarChart3 },
     { id: 'cats', label: 'Catégories', icon: Tags },
     { id: 'calendar', label: 'Calendrier', icon: CalendarIcon },
     { id: 'tx', label: 'Transactions', icon: Receipt },
-    { id: 'reimb', label: 'Remboursables', icon: RefreshCw },
+    { id: 'affaires', label: 'Affaires', icon: Briefcase },
+    { id: 'societe', label: 'Société', icon: Building2 },
+    { id: 'reimb', label: 'Créances', icon: UserIcon },
   ];
 
   return (
@@ -4335,76 +5707,71 @@ export default function App() {
         /* Cartes du dashboard : un peu plus de respiration sur mobile */
         html[data-touch="1"] .gap-3 { gap: 0.625rem !important; }
 
-        /* Calendrier : la hauteur des cellules est gérée par les classes Tailwind
-           (min-h-[72px] partout, md:aspect-square sur desktop pour des cases carrées). */
+        /* ============================================================
+           RUBRIQUES — grands onglets sur leur propre ligne.
+           Mobile : deux rangées de 4, icône au-dessus du libellé.
+           Tablette : une rangée, icône au-dessus. Ordinateur : icône + libellé.
+           ============================================================ */
+        .app-top { position: sticky; top: 0; z-index: 30; }
+        .nav-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+        .nav-tab {
+          flex: 1 1 22%; min-width: 0;
+          display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+          padding: 8px 4px; border-radius: 14px;
+          font-size: 12.5px; font-weight: 600; line-height: 1.1; white-space: nowrap;
+        }
+        .nav-tab svg { flex-shrink: 0; }
+        .nav-full { display: none; }
+        @media (min-width: 768px) {
+          .nav-tabs { flex-wrap: nowrap; gap: 8px; }
+          .nav-tab { flex: 1 1 auto; padding: 11px 10px; font-size: 13.5px; }
+          .nav-short { display: none; }
+          .nav-full { display: inline; }
+        }
+        @media (min-width: 1100px) {
+          .nav-tab { flex-direction: row; gap: 10px; padding: 15px 14px; font-size: 16.5px; border-radius: 16px; }
+        }
+
+        /* ============================================================
+           CALENDRIER — grille à hauteur libre : chaque case grandit pour
+           afficher toutes les transactions du jour.
+           Mobile : 7 colonnes, montants seuls. Ordinateur : libellés +
+           montants, et une 8e colonne de sous-total par semaine.
+           ============================================================ */
+        .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; align-items: stretch; }
+        .cal-cell { min-height: 58px; min-width: 0; }
+        .cal-chip { transition: opacity 150ms; }
+        .cal-legend { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+        .cal-legend::-webkit-scrollbar { display: none; }
+        .cal-legend > * { flex-shrink: 0; }
+        .cal-week-cell { display: none; }
+        .cal-desktop { display: none; }
+        .cal-mobile { display: block; }
+        @media (min-width: 768px) {
+          .cal-grid { grid-template-columns: repeat(7, minmax(0, 1fr)) 84px; gap: 6px; }
+          .cal-cell { min-height: 104px; }
+          .cal-legend { flex-wrap: wrap; overflow-x: visible; }
+          .cal-week-cell { display: flex; }
+          .cal-desktop { display: block; }
+          .cal-mobile { display: none; }
+        }
       `}</style>
 
-      {/* Header */}
-      <header className="sticky top-0 z-30 bg-stone-50/80 backdrop-blur-md border-b border-stone-200/80">
-        <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 flex items-center gap-4">
+      {/* Bandeau fixe : barre du haut + rubriques, qui suivent ensemble au défilement */}
+      <div className="app-top bg-stone-50/80 backdrop-blur-md border-b border-stone-200/80">
+      <header>
+        <div className="max-w-7xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center gap-4">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 bg-stone-900 rounded-lg flex items-center justify-center">
               <Wallet className="text-stone-50" size={18} />
             </div>
             <div>
               <h1 className="font-serif text-lg leading-none text-stone-900">Finances</h1>
-              <p className="text-[10px] uppercase tracking-widest text-stone-500 mt-0.5">Gestion personnelle</p>
+              <p className="text-[10px] uppercase tracking-widest text-stone-500 mt-0.5 whitespace-nowrap">Gestion personnelle</p>
             </div>
           </div>
 
-          <nav className="hidden md:flex items-center gap-1 ml-6">
-            {navItems.map(item => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setView(item.id)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-2 ${
-                    view === item.id
-                      ? 'bg-stone-900 text-stone-50'
-                      : 'text-stone-600 hover:bg-stone-100 hover:text-stone-900'
-                  }`}
-                >
-                  <Icon size={14} />
-                  {item.label}
-                </button>
-              );
-            })}
-          </nav>
-
           <div className="ml-auto flex items-center gap-2">
-            {(() => {
-              const cycle = (s) => s === 'hide' ? 'pending' : s === 'pending' ? 'all' : 'hide';
-              const stateClass = (s) => {
-                if (s === 'hide') return 'bg-white text-stone-700 border-stone-300 hover:bg-stone-50';
-                if (s === 'pending') return 'bg-amber-500 text-white border-amber-500 hover:bg-amber-600';
-                return 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700';
-              };
-              const stateLabel = (s, kind) => {
-                const k = kind === 'societe' ? 'société' : 'proximité';
-                if (s === 'hide') return `Remb. ${k} : masqués (clic = en attente)`;
-                if (s === 'pending') return `Remb. ${k} : en attente uniquement (clic = tous)`;
-                return `Remb. ${k} : tous affichés (clic = masquer)`;
-              };
-              return (
-                <>
-                  <button
-                    onClick={() => setShowSociete(cycle)}
-                    title={stateLabel(showSociete, 'societe')}
-                    className={`inline-flex items-center justify-center w-10 h-10 rounded-lg border transition shadow-sm ${stateClass(showSociete)}`}
-                  >
-                    <Building2 size={18} strokeWidth={2} />
-                  </button>
-                  <button
-                    onClick={() => setShowProximite(cycle)}
-                    title={stateLabel(showProximite, 'proximite')}
-                    className={`inline-flex items-center justify-center w-10 h-10 rounded-lg border transition shadow-sm ${stateClass(showProximite)}`}
-                  >
-                    <UserIcon size={18} strokeWidth={2} />
-                  </button>
-                </>
-              );
-            })()}
             {isGistConnected && (
               <button
                 onClick={() => setShowSettings(true)}
@@ -4437,8 +5804,8 @@ export default function App() {
             >
               <Settings size={15} />
             </button>
-            <Button variant="outline" size="sm" onClick={() => setShowImport(true)}>
-              <Upload size={14} /> <span className="hidden sm:inline">Importer un document</span>
+            <Button variant="outline" size="sm" onClick={() => setShowImport(true)} title="Importer un document" className="whitespace-nowrap">
+              <Upload size={14} /> <span className="hidden sm:inline">Importer</span>
             </Button>
             <Button size="sm" onClick={() => { setEditingTx(null); setDefaultDate(null); setShowTxForm(true); }}>
               <Plus size={14} /> <span className="hidden sm:inline">Ajouter</span>
@@ -4446,8 +5813,11 @@ export default function App() {
           </div>
         </div>
 
-        {/* Nav mobile : icônes seules, mieux réparties */}
-        <nav className="md:hidden flex items-center justify-around gap-1 px-2 pb-2">
+      </header>
+
+      {/* Rubriques : grands onglets avec libellé, toujours visibles */}
+      <nav className="app-nav">
+        <div className="nav-tabs max-w-7xl mx-auto px-3 md:px-6 pt-1 pb-2.5">
           {navItems.map(item => {
             const Icon = item.icon;
             const isActive = view === item.id;
@@ -4455,29 +5825,34 @@ export default function App() {
               <button
                 key={item.id}
                 onClick={() => setView(item.id)}
-                title={item.label}
                 aria-label={item.label}
-                className={`flex-1 flex items-center justify-center py-2.5 rounded-lg transition ${
+                aria-current={isActive ? 'page' : undefined}
+                className={`nav-tab transition ${
                   isActive
                     ? 'bg-stone-900 text-stone-50'
-                    : 'text-stone-600 hover:bg-stone-100'
+                    : 'text-stone-600 hover:bg-stone-100 hover:text-stone-900'
                 }`}
               >
-                <Icon size={18} strokeWidth={isActive ? 2.2 : 1.8} />
+                <Icon size={22} strokeWidth={isActive ? 2.2 : 1.8} />
+                <span className="nav-short">{item.short || item.label}</span>
+                <span className="nav-full">{item.label}</span>
               </button>
             );
           })}
-        </nav>
-      </header>
+        </div>
+      </nav>
+      </div>
 
       {/* Contenu */}
       <main className="max-w-7xl mx-auto px-4 md:px-6 py-6">
-        {view === 'dashboard' && <Dashboard transactions={visibleTransactions} categories={categories} allTransactions={transactions} />}
+        {view === 'dashboard' && <Dashboard transactions={visibleTransactions} categories={categories} allTransactions={personalTransactions} societePending={societePending} societeCount={societePendingTxs.length} onOpenSociete={() => setView('societe')} affaireCatIds={affaireCatIds} />}
         {view === 'times' && <TimeViews transactions={visibleTransactions} categories={categories} />}
         {view === 'cats' && <CategoriesPage transactions={visibleTransactions} allTransactions={transactions} categories={categories} onCategoriesChange={setCategories} />}
-        {view === 'calendar' && <CalendarView transactions={visibleTransactions} categories={categories} onAddTx={(date) => { setDefaultDate(date); setShowTxForm(true); }} onEdit={(t) => { setEditingTx(t); setShowTxForm(true); }} onDelete={deleteTransaction} />}
-        {view === 'tx' && <TransactionsList transactions={visibleTransactions} categories={categories} onEdit={(t) => { setEditingTx(t); setShowTxForm(true); }} onDelete={deleteTransaction} />}
-        {view === 'reimb' && <ReimbursableView transactions={transactions} categories={categories} onUpdate={updateTransaction} />}
+        {view === 'calendar' && <CalendarView transactions={visibleTransactions} categories={categories} onAddTx={(date) => { setDefaultDate(date); setShowTxForm(true); }} onEdit={startEdit} onDelete={deleteTransaction} />}
+        {view === 'tx' && <TransactionsList transactions={visibleTransactions} categories={categories} onEdit={startEdit} onDelete={deleteTransaction} />}
+        {view === 'affaires' && <AffairesView transactions={transactions} categories={categories} affaireCatIds={affaireCatIds} projetsMeta={projetsMeta} onSetTauxMarge={setTauxMarge} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={openAffaireForm} />}
+        {view === 'societe' && <ReimbursableView key="societe" scope="societe" transactions={transactions} categories={categories} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={() => openRegistreForm('societe')} />}
+        {view === 'reimb' && <ReimbursableView key="proximite" scope="proximite" transactions={transactions} categories={categories} affaireCatIds={affaireCatIds} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={() => openRegistreForm('proximite')} />}
       </main>
 
       {/* Input file invisible : déclenché par le bouton "Importer" dans la modale Paramètres */}
@@ -4493,11 +5868,20 @@ export default function App() {
       <Modal
         open={showTxForm}
         onClose={() => { setShowTxForm(false); setEditingTx(null); setDefaultDate(null); setPrefillTx(null); }}
-        title={editingTx ? 'Modifier la transaction' : (prefillTx ? 'Nouvelle transaction (pré-remplie)' : 'Nouvelle transaction')}
+        title={
+          editingTx ? 'Modifier la transaction'
+            : (!prefillTx || (!prefillTx.libelle && !prefillTx.remboursable)) ? 'Nouvelle transaction'
+            : (prefillTx.remboursable && !prefillTx.libelle)
+              ? (prefillTx.remboursableType === 'proximite' ? 'Nouvelle créance' : 'Nouveau frais de société')
+              : 'Nouvelle transaction (pré-remplie)'
+        }
       >
         <TransactionForm
           initial={editingTx || prefillTx}
           categories={categories}
+          personnes={personnes}
+          projets={projets}
+          acheteurs={acheteurs}
           defaultDate={defaultDate}
           onSave={(tx) => {
             // Si on est en mode pré-remplissage URL, l'objet "initial" qu'on a passé
