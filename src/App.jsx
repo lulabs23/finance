@@ -247,6 +247,54 @@ const montantDu = (tx, affaireCatIds = []) => {
   return du > 0 && du < total ? du : total;
 };
 const debiteurDe = (tx) => String(tx.duPar || tx.acheteur || '').trim();
+// ------------------------------------------------------------
+// Étalement d'une dépense (abonnements : vélo, IA, salle de sport…)
+// La dépense est saisie une fois, à sa date de paiement, avec
+//   etalement = { frequence: 'mois' | '4semaines', nombre } ou { frequence, fin: 'YYYY-MM-DD' }.
+// Les vues personnelles la répartissent en échéances égales (au centime près) à partir
+// de cette date : même jour chaque mois, ou tous les 28 jours, jusqu'au nombre ou à la date de fin.
+// ------------------------------------------------------------
+const isoVersParties = (iso) => { const [y, m, d] = String(iso).split('-').map(Number); return { y, m, d }; };
+const ajouterMoisISO = (iso, k) => {
+  const { y, m, d } = isoVersParties(iso);
+  const idx = (m - 1) + k;
+  const yy = y + Math.floor(idx / 12);
+  const mm = ((idx % 12) + 12) % 12 + 1;
+  const dernierJour = new Date(yy, mm, 0).getDate();
+  return `${yy}-${String(mm).padStart(2, '0')}-${String(Math.min(d, dernierJour)).padStart(2, '0')}`;
+};
+const ajouterJoursISO = (iso, n) => { const { y, m, d } = isoVersParties(iso); return toISODate(new Date(y, m - 1, d + n)); };
+const datesEtalement = (dateDebut, etal) => {
+  if (!etal || !dateDebut) return [dateDebut];
+  const pas = (k) => (etal.frequence === '4semaines' ? ajouterJoursISO(dateDebut, 28 * k) : ajouterMoisISO(dateDebut, k));
+  const dates = [];
+  if (etal.fin) {
+    for (let k = 0; k < 600; k++) { const dd = pas(k); if (dd > etal.fin) break; dates.push(dd); }
+  } else {
+    const n = Math.min(600, Math.max(1, Math.floor(Number(etal.nombre) || 1)));
+    for (let k = 0; k < n; k++) dates.push(pas(k));
+  }
+  return dates.length > 0 ? dates : [dateDebut];
+};
+// Répartit un total en n montants égaux ; les centimes restants vont aux premières échéances
+const repartirMontant = (total, n) => {
+  const cents = Math.round(total * 100);
+  const base = Math.floor(cents / n);
+  const reste = cents - base * n;
+  return Array.from({ length: n }, (_, i) => (base + (i < reste ? 1 : 0)) / 100);
+};
+// Étalement saisi dans le formulaire → objet stocké (null si incomplet ou incohérent)
+const etalementDuFormulaire = (tx) => {
+  const frequence = tx.etalFreq === '4semaines' ? '4semaines' : 'mois';
+  if (tx.etalFin === 'date') {
+    if (!tx.etalDate || !tx.date || tx.etalDate <= tx.date) return null;
+    const e = { frequence, fin: tx.etalDate };
+    return datesEtalement(tx.date, e).length >= 2 ? e : null;
+  }
+  const n = parseInt(String(tx.etalNombre || '').trim(), 10);
+  return n >= 2 && n <= 600 ? { frequence, nombre: n } : null;
+};
+
 // Part déjà reçue d'un montant encore en attente (remboursement ou encaissement partiel)
 const dejaRecu = (tx) => { const v = Number(tx.dejaRecu); return v > 0 ? v : 0; };
 const isDuRegle = (tx) => (tx.type === 'revenu' ? tx.recu !== false : !!tx.rembourse);
@@ -581,6 +629,19 @@ const DuBadge = ({ t }) => {
   );
 };
 
+// Échéance d'une dépense étalée (ex. 3/12)
+const EtalBadge = ({ t }) => {
+  if (!t._etal) return null;
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded shrink-0 bg-stone-100 text-stone-600"
+      title={`Échéance ${t._etal.n} sur ${t._etal.nb} · ${formatEUR(t._etal.total)} au total`}
+    >
+      <RefreshCw size={9} /> {t._etal.n}/{t._etal.nb}
+    </span>
+  );
+};
+
 const ProgressBar = ({ value, max = 100 }) => (
   <div className="w-full h-1.5 bg-stone-100 rounded-full overflow-hidden">
     <div
@@ -762,6 +823,7 @@ const JustificatifViewer = ({ open, onClose, justificatif }) => {
 
 const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, personnes = [], projets = [], acheteurs = [] }) => {
   const affaireCatIds = categories.filter(isAffaireCat).map(c => c.id);
+  const [etalErreur, setEtalErreur] = useState(false);
   const [tx, setTx] = useState(() => {
     if (initial) {
       // Migration : si la transaction n'a que categorieId, on la convertit
@@ -777,6 +839,11 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
         quantite: initial.quantite ?? '',
         reduction: initial.reduction ?? '',
         dejaRecu: initial.dejaRecu ?? '',
+        etalOn: !!initial.etalement,
+        etalFreq: initial.etalement?.frequence === '4semaines' ? '4semaines' : 'mois',
+        etalFin: initial.etalement?.fin ? 'date' : 'nombre',
+        etalNombre: initial.etalement?.nombre ? String(initial.etalement.nombre) : '12',
+        etalDate: initial.etalement?.fin || '',
       };
     }
     return {
@@ -807,6 +874,12 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
       reduction: '',
       // Part déjà reçue d'un montant en attente (remboursement ou encaissement partiel)
       dejaRecu: '',
+      // Étalement de la dépense (abonnements)
+      etalOn: false,
+      etalFreq: 'mois',
+      etalFin: 'nombre',
+      etalNombre: '12',
+      etalDate: '',
     };
   });
 
@@ -884,6 +957,13 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
         if (deja >= total) out.rembourse = true;
         else out.dejaRecu = round2(deja);
       }
+    }
+    // Étalement : seulement pour une dépense, avec un nombre d'échéances ou une date de fin valides
+    ['etalOn', 'etalFreq', 'etalFin', 'etalNombre', 'etalDate', 'etalement'].forEach(k => { delete out[k]; });
+    if (out.type === 'dépense' && tx.etalOn) {
+      const etal = etalementDuFormulaire(tx);
+      if (!etal) { setEtalErreur(true); return; }
+      out.etalement = etal;
     }
     onSave(out);
   };
@@ -1053,7 +1133,7 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
                 onClick={() => setTx(societe ? off : { ...tx, remboursable: true, remboursableType: 'societe' })}
                 className={chip(societe)}
               >
-                <Building2 size={14} /> Frais de société
+                <Building2 size={14} /> <span className="hidden sm:inline">Frais de société</span><span className="sm:hidden">Société</span>
               </button>
               <button
                 type="button"
@@ -1062,6 +1142,14 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
                 className={chip(du)}
               >
                 <UserIcon size={14} /> Créance
+              </button>
+              <button
+                type="button"
+                aria-pressed={!!tx.etalOn}
+                onClick={() => { setTx({ ...tx, etalOn: !tx.etalOn }); setEtalErreur(false); }}
+                className={chip(!!tx.etalOn)}
+              >
+                <RefreshCw size={14} /> Étaler
               </button>
             </div>
             {(societe || du) && (
@@ -1127,6 +1215,65 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
                   </div>
                 )}
               </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {tx.type === 'dépense' && tx.etalOn && (() => {
+        const seg = (active) => `flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-sm font-medium transition ${
+          active ? 'bg-stone-900 text-white' : 'bg-white text-stone-600 hover:bg-stone-100'
+        }`;
+        const maj = (patch) => { setTx({ ...tx, ...patch }); setEtalErreur(false); };
+        const etal = etalementDuFormulaire(tx);
+        const total = Math.abs(parseFloat(String(tx.montant).replace(',', '.')) || 0);
+        const dates = etal ? datesEtalement(tx.date, etal) : [];
+        const montants = etal && total > 0 ? repartirMontant(total, dates.length) : [];
+        return (
+          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 space-y-2.5">
+            <div className="flex gap-1.5">
+              <button type="button" aria-pressed={tx.etalFreq !== '4semaines'} onClick={() => maj({ etalFreq: 'mois' })} className={seg(tx.etalFreq !== '4semaines')}>
+                Mensuel
+              </button>
+              <button type="button" aria-pressed={tx.etalFreq === '4semaines'} onClick={() => maj({ etalFreq: '4semaines' })} className={seg(tx.etalFreq === '4semaines')}>
+                4 semaines
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 items-end">
+              <div className="flex gap-1.5">
+                <button type="button" aria-pressed={tx.etalFin !== 'date'} onClick={() => maj({ etalFin: 'nombre' })} className={seg(tx.etalFin !== 'date')}>
+                  Nombre
+                </button>
+                <button type="button" aria-pressed={tx.etalFin === 'date'} onClick={() => maj({ etalFin: 'date' })} className={seg(tx.etalFin === 'date')}>
+                  Jusqu'au
+                </button>
+              </div>
+              {tx.etalFin === 'date' ? (
+                <Input
+                  type="date"
+                  value={tx.etalDate}
+                  min={tx.date}
+                  onChange={(e) => maj({ etalDate: e.target.value })}
+                  aria-label="Date de fin"
+                  style={etalErreur ? { borderColor: '#f43f5e' } : undefined}
+                />
+              ) : (
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  value={tx.etalNombre}
+                  onChange={(e) => maj({ etalNombre: e.target.value })}
+                  placeholder="12"
+                  aria-label="Nombre d'échéances"
+                  style={etalErreur ? { borderColor: '#f43f5e' } : undefined}
+                />
+              )}
+            </div>
+            {etal && montants.length > 1 && (
+              <p className="text-sm text-stone-700 tabular-nums">
+                <span className="font-medium text-stone-900">{dates.length} × {formatEUR(montants[montants.length - 1])}</span>
+                {' · '}{formatDateFR(dates[0])} → {formatDateFR(dates[dates.length - 1])}
+              </p>
             )}
           </div>
         );
@@ -2139,7 +2286,8 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
   const txTitle = (t) => {
     const names = knownCatIds(t).map(id => catMap[id].name).join(', ') || 'Sans catégorie';
     const du = t._du > 0 ? ` · ma part sur ${formatEUR(t._total)}` : '';
-    return `${t.libelle} · ${t.type === 'revenu' ? '+' : '−'}${formatEUR(Math.abs(t.montant))}${du} · ${names}`;
+    const et = t._etal ? ` · échéance ${t._etal.n}/${t._etal.nb} sur ${formatEUR(t._etal.total)}` : '';
+    return `${t.libelle} · ${t.type === 'revenu' ? '+' : '−'}${formatEUR(Math.abs(t.montant))}${du}${et} · ${names}`;
   };
 
   const selectedDay = selectedIso ? realDays.find(d => d.iso === selectedIso) || null : null;
@@ -2447,7 +2595,7 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
                             <Paperclip size={12} />
                           </button>
                         )}
-                        <DuBadge t={t} />
+                        <DuBadge t={t} /><EtalBadge t={t} />
                         {t.type === 'revenu' && t.recu === false && (
                           <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 shrink-0">
                             <Clock size={9} /> En attente
@@ -4333,7 +4481,7 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
                       <Paperclip size={12} />
                     </button>
                   )}
-                  <DuBadge t={t} />
+                  <DuBadge t={t} /><EtalBadge t={t} />
                   {t.type === 'revenu' && t.recu === false && (
                     <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 shrink-0">
                       <Clock size={9} /> Attente
@@ -4428,7 +4576,9 @@ const Dashboard = ({ transactions, categories, allTransactions, societePending =
 
   const balance = revenue - netExpenses;
 
+  const todayIso = toISODate(today);
   const recent = [...transactions]
+    .filter(t => !(t._etal && t.date > todayIso))
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 3);
 
@@ -5144,7 +5294,7 @@ export default function App() {
   // pour ma part ; si elle est due en totalité, elle n'apparaît que dans « Créances ».
   // Les copies portent _du / _duRegle / _total pour l'affichage ; l'édition repart
   // toujours de la transaction d'origine (voir startEdit).
-  const visibleTransactions = useMemo(() => personalTransactions.map(t => {
+  const partsPersonnelles = useMemo(() => personalTransactions.map(t => {
     if (!isProximite(t)) return t;
     const total = Math.abs(Number(t.montant) || 0);
     const du = montantDu(t);
@@ -5153,13 +5303,36 @@ export default function App() {
     return { ...t, montant: -part, remboursable: false, _du: du, _duRegle: !!t.rembourse, _total: total };
   }).filter(Boolean), [personalTransactions]);
 
+  // Dépenses étalées : une échéance par période (id « <id>__e<n> », _srcId = transaction d'origine)
+  const visibleTransactions = useMemo(() => {
+    const out = [];
+    partsPersonnelles.forEach(t => {
+      if (t.type !== 'dépense' || !t.etalement) { out.push(t); return; }
+      const dates = datesEtalement(t.date, t.etalement);
+      if (dates.length < 2) { out.push(t); return; }
+      const total = Math.abs(Number(t.montant) || 0);
+      const montants = repartirMontant(total, dates.length);
+      dates.forEach((date, i) => out.push({
+        ...t,
+        id: `${t.id}__e${i + 1}`,
+        _srcId: t.id,
+        date,
+        montant: -montants[i],
+        _etal: { n: i + 1, nb: dates.length, total },
+        ...(i > 0 ? { _du: 0 } : {}),
+      }));
+    });
+    return out;
+  }, [partsPersonnelles]);
+
   // Débiteurs déjà saisis (suggestions du formulaire)
   const personnes = useMemo(() => Array.from(new Set(
     transactions.map(t => (t.duPar || '').trim()).filter(Boolean)
   )).sort((a, b) => a.localeCompare(b, 'fr')), [transactions]);
 
   const startEdit = (t) => {
-    setEditingTx(transactions.find(x => x.id === t.id) || t);
+    const id = t._srcId || t.id;
+    setEditingTx(transactions.find(x => x.id === id) || t);
     setShowTxForm(true);
   };
 
@@ -5460,7 +5633,8 @@ export default function App() {
   };
 
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
-  const deleteTransaction = (id) => setConfirmDeleteId(id);
+  // Une échéance d'une dépense étalée renvoie à la transaction d'origine
+  const deleteTransaction = (id) => setConfirmDeleteId(String(id).split('__e')[0]);
   const performDelete = () => {
     setTransactions(prev => prev.filter(t => t.id !== confirmDeleteId));
     setConfirmDeleteId(null);
