@@ -196,6 +196,7 @@ const DEFAULT_CATEGORIES = [
   { id: 'cat_autre', name: 'Autres', color: '#9c9c9c' },
   { id: 'cat_revenu', name: 'Revenu', color: '#3d5a80' },
   { id: 'cat_affaires', name: 'Affaires', color: '#b5935a' },
+  { id: 'cat_participation', name: 'Participation', color: '#6d597a' },
 ];
 
 // Helper : récupère un tableau de categorieIds depuis une transaction,
@@ -227,21 +228,32 @@ const isProximite = (tx) => !!tx.remboursable && tx.remboursableType === 'proxim
 const isAffaireCat = (c) => c.id === 'cat_affaires' || /^affaires?$/i.test(String(c.name || '').trim());
 const isAffaire = (tx, affaireCatIds) => getCatIds(tx).some(id => affaireCatIds.includes(id));
 
-// Créances : ce que les autres me doivent. Trois sources possibles :
+// Revenu de participation : revenu de la catégorie « Participation ». C'est un revenu pour
+// le personnel et une dépense pour la société : il figure donc AUSSI dans la rubrique Société,
+// comme dépense de la société. C'est le seul cas où une même transaction apparaît à la fois
+// dans Société et dans les vues personnelles.
+const isParticipationCat = (c) => c.id === 'cat_participation' || /^participations?$/i.test(String(c.name || '').trim());
+const isParticipation = (tx, participationCatIds = []) =>
+  tx.type === 'revenu' && getCatIds(tx).some(id => participationCatIds.includes(id));
+
+// Créances : ce que les autres me doivent.
 //   - une dépense dont tout ou partie est due par quelqu'un (remboursable « proximite »,
 //     champ optionnel `montantDu` ; absent = toute la dépense, comme avant) ;
-//   - un revenu en attente lié à une dette (champ `dette`) ;
-//   - une vente de la catégorie « Affaires » pas encore encaissée : créance automatique,
-//     le débiteur est l'acheteur.
+//   - tout revenu en attente (pour une vente de la catégorie « Affaires », le débiteur
+//     est l'acheteur), sauf un revenu de participation, suivi dans Société ;
+//   - un revenu déjà reçu reste dans la liste, comme réglé, s'il a un débiteur nommé
+//     (`duPar`) ou l'ancien marqueur `dette`.
 // `duPar` (optionnel) nomme le débiteur ; `dejaRecu` (optionnel) est la part déjà reçue.
-const isDetteRevenu = (tx, affaireCatIds = []) => tx.type === 'revenu' && (
-  !!tx.dette
-  || (tx.recu === false && Math.abs(Number(tx.montant) || 0) > 0 && isAffaire(tx, affaireCatIds))
-);
-const isDu = (tx, affaireCatIds = []) => isProximite(tx) || isDetteRevenu(tx, affaireCatIds);
-const montantDu = (tx, affaireCatIds = []) => {
+const isDetteRevenu = (tx, affaireCatIds = [], participationCatIds = []) =>
+  tx.type === 'revenu'
+  && Math.abs(Number(tx.montant) || 0) > 0
+  && !isParticipation(tx, participationCatIds)
+  && (tx.recu === false || !!tx.dette || !!String(tx.duPar || '').trim());
+const isDu = (tx, affaireCatIds = [], participationCatIds = []) =>
+  isProximite(tx) || isDetteRevenu(tx, affaireCatIds, participationCatIds);
+const montantDu = (tx, affaireCatIds = [], participationCatIds = []) => {
   const total = Math.abs(Number(tx.montant) || 0);
-  if (isDetteRevenu(tx, affaireCatIds)) return total;
+  if (isDetteRevenu(tx, affaireCatIds, participationCatIds)) return total;
   if (!isProximite(tx)) return 0;
   const du = Number(tx.montantDu);
   return du > 0 && du < total ? du : total;
@@ -823,6 +835,7 @@ const JustificatifViewer = ({ open, onClose, justificatif }) => {
 
 const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, personnes = [], projets = [], acheteurs = [] }) => {
   const affaireCatIds = categories.filter(isAffaireCat).map(c => c.id);
+  const participationCatIds = categories.filter(isParticipationCat).map(c => c.id);
   const [etalErreur, setEtalErreur] = useState(false);
   const [tx, setTx] = useState(() => {
     if (initial) {
@@ -912,9 +925,12 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
     if (out.type === 'revenu') {
       out.remboursable = false;
       out.rembourse = false;
-      if (tx.dette) {
-        out.dette = true;
-        if (duPar) out.duPar = duPar;
+      if (tx.dette) out.dette = true;
+      if (duPar) out.duPar = duPar;
+      // participation : pas de débiteur (c'est la société), pas de créance
+      if (finalCatIds.some(id => participationCatIds.includes(id))) {
+        delete out.dette;
+        delete out.duPar;
       }
     } else if (out.remboursable && out.remboursableType === 'proximite') {
       const du = parseFloat(String(tx.montantDu ?? '').replace(',', '.'));
@@ -1290,8 +1306,11 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
       </datalist>
 
       {tx.type === 'revenu' && (() => {
-        // Trois états exclusifs : reçu, en attente, ou créance (en attente et dû par quelqu'un)
-        const etat = tx.recu !== false ? 'recu' : (tx.dette && !affaireOn ? 'creance' : 'attente');
+        // Reçu ou en attente. En attente, c'est une créance (débiteur facultatif), sauf pour une
+        // vente d'affaire (débiteur = acheteur) ou une participation (suivie dans Société).
+        const recu = tx.recu !== false;
+        const participationOn = (tx.categorieIds || []).some(id => participationCatIds.includes(id));
+        const avecDebiteur = !recu && !affaireOn && !participationOn;
         const seg = (active, tone) => `flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-sm font-medium transition ${
           active ? tone : 'bg-stone-50 text-stone-600 hover:bg-stone-100'
         }`;
@@ -1301,34 +1320,24 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
             <div className="flex gap-1.5">
               <button
                 type="button"
-                aria-pressed={etat === 'recu'}
+                aria-pressed={recu}
                 onClick={() => setTx({ ...tx, recu: true })}
-                className={seg(etat === 'recu', 'bg-emerald-700 text-white')}
+                className={seg(recu, 'bg-emerald-700 text-white')}
               >
                 <CheckCircle2 size={14} /> Reçu
               </button>
               <button
                 type="button"
-                aria-pressed={etat === 'attente'}
-                onClick={() => setTx({ ...tx, recu: false, dette: false })}
-                className={seg(etat === 'attente', 'bg-amber-500 text-white')}
+                aria-pressed={!recu}
+                onClick={() => setTx({ ...tx, recu: false })}
+                className={seg(!recu, 'bg-amber-500 text-white')}
               >
                 <Clock size={14} /> En attente
               </button>
-              {!affaireOn && (
-                <button
-                  type="button"
-                  aria-pressed={etat === 'creance'}
-                  onClick={() => setTx({ ...tx, recu: false, dette: true })}
-                  className={seg(etat === 'creance', 'bg-stone-900 text-white')}
-                >
-                  <UserIcon size={14} /> Créance
-                </button>
-              )}
             </div>
-            {(etat !== 'recu' || (tx.dette && !affaireOn)) && (
-              <div className={`grid gap-3 mt-2 ${tx.dette && !affaireOn && etat !== 'recu' ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                {tx.dette && !affaireOn && (
+            {!recu && (
+              <div className={`grid gap-3 mt-2 ${avecDebiteur ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                {avecDebiteur && (
                   <div>
                     <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Débiteur</label>
                     <Input
@@ -1339,18 +1348,16 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
                     />
                   </div>
                 )}
-                {etat !== 'recu' && (
-                  <div>
-                    <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Déjà reçu (€)</label>
-                    <Input
-                      type="text"
-                      inputMode="decimal"
-                      value={tx.dejaRecu}
-                      onChange={(e) => setTx({ ...tx, dejaRecu: e.target.value })}
-                      placeholder="0,00"
-                    />
-                  </div>
-                )}
+                <div>
+                  <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Déjà reçu (€)</label>
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    value={tx.dejaRecu}
+                    onChange={(e) => setTx({ ...tx, dejaRecu: e.target.value })}
+                    placeholder="0,00"
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -2656,10 +2663,13 @@ const REIMB_SCOPES = {
     doc: 'Note de frais',
     docTitre: 'Note de frais',
     objetAttente: 'Note de frais à rembourser',
-    unite: 'frais',
-    unitePluriel: 'frais',
-    vide: 'Aucun frais de société enregistré pour le moment.',
-    kpiTotal: 'Total des frais',
+    unite: 'opération',
+    unitePluriel: 'opérations',
+    vide: 'Aucune opération enregistrée pour le moment.',
+    kpiTotal: 'Total',
+    kpiAttente: 'En attente',
+    kpiRegle: 'Réglé',
+    filtreRegle: 'Réglés',
   },
   proximite: {
     titre: 'Créances',
@@ -2671,24 +2681,36 @@ const REIMB_SCOPES = {
     unitePluriel: 'créances',
     vide: 'Aucune créance enregistrée pour le moment.',
     kpiTotal: 'Total',
+    kpiAttente: 'En attente de remboursement',
+    kpiRegle: 'Remboursé',
+    filtreRegle: 'Remboursés',
   },
 };
 
-const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpdate, onEdit, onDelete, onAdd, scope = 'societe' }) => {
+const ReimbursableView = ({ transactions, categories, affaireCatIds = [], participationCatIds = [], onUpdate, onEdit, onDelete, onAdd, onAddParticipation, scope = 'societe' }) => {
   const L = REIMB_SCOPES[scope] || REIMB_SCOPES.societe;
   const duScope = scope === 'proximite';
   const ScopeIcon = duScope ? UserIcon : Building2;
   // Montant concerné et statut « réglé » selon le registre
-  const amt = (t) => (duScope ? montantDu(t, affaireCatIds) : Math.abs(t.montant));
-  const regle = (t) => (duScope ? isDuRegle(t) : !!t.rembourse);
+  const amt = (t) => (duScope ? montantDu(t, affaireCatIds, participationCatIds) : Math.abs(t.montant));
+  // Réglé : dépense remboursée, ou revenu (créance, participation) reçu
+  const regle = (t) => isDuRegle(t);
+  const isPart = (t) => !duScope && isParticipation(t, participationCatIds);
   // Remboursement partiel : part déjà reçue et reste à recevoir
   const recuPart = (t) => (regle(t) ? amt(t) : Math.min(dejaRecu(t), amt(t)));
   const reste = (t) => amt(t) - recuPart(t);
   // Montant porté sur le document : le reste à payer tant que ce n'est pas réglé
   const docAmt = (t) => (regle(t) ? amt(t) : reste(t));
-  const reimbursables = transactions.filter(t => (duScope ? isDu(t, affaireCatIds) : isSociete(t)));
+  // Société : ses dépenses (frais de société + participations versées) ; Créances : tout ce qui m'est dû
+  const reimbursables = transactions.filter(t => (duScope
+    ? isDu(t, affaireCatIds, participationCatIds)
+    : (isSociete(t) || isParticipation(t, participationCatIds))));
   const pending = reimbursables.filter(t => !regle(t));
   const completed = reimbursables.filter(t => regle(t));
+  // Note de frais / récapitulatif : uniquement les dépenses (jamais les participations)
+  const docItems = reimbursables.filter(t => !isPart(t));
+  const docPending = docItems.filter(t => !regle(t));
+  const docCompleted = docItems.filter(t => regle(t));
 
   const totalPending = pending.reduce((s, t) => s + reste(t), 0);
   const totalCompleted = reimbursables.reduce((s, t) => s + recuPart(t), 0);
@@ -2703,7 +2725,7 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
   const [viewingJustif, setViewingJustif] = useState(null);
 
   const [invoiceOpen, setInvoiceOpen] = useState(false);
-  // Filtre d'affichage dans le modal facture : "pending" (en attente, défaut) | "paid" (déjà remboursées) | "all" (toutes)
+  // Filtre d'affichage dans le modal facture : "docPending" (en attente, défaut) | "paid" (déjà remboursées) | "all" (toutes)
   const [invoiceFilter, setInvoiceFilter] = useState('pending');
   const [invoice, setInvoice] = useState({
     emetteurNom: '',
@@ -2713,7 +2735,7 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
     destinataireAdresse: '',
     numero: 'NDF-' + new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0'),
     objet: L.objetAttente,
-    selectedIds: pending.map(t => t.id),
+    selectedIds: docPending.map(t => t.id),
   });
 
   // À chaque ouverture du modal, on resélectionne par défaut les transactions
@@ -2721,18 +2743,18 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
   useEffect(() => {
     setInvoice(inv => ({
       ...inv,
-      selectedIds: inv.selectedIds.filter(id => reimbursables.some(r => r.id === id)),
+      selectedIds: inv.selectedIds.filter(id => docItems.some(r => r.id === id)),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reimbursables.length]);
+  }, [docItems.length]);
 
   // Liste affichée dans le modal selon le filtre actif
-  const displayedReimb = invoiceFilter === 'pending' ? pending
-    : invoiceFilter === 'paid' ? completed
-    : reimbursables;
+  const displayedReimb = invoiceFilter === 'pending' ? docPending
+    : invoiceFilter === 'paid' ? docCompleted
+    : docItems;
 
   // Les transactions sélectionnées peuvent être en attente OU remboursées
-  const selectedTxs = reimbursables.filter(t => invoice.selectedIds.includes(t.id));
+  const selectedTxs = docItems.filter(t => invoice.selectedIds.includes(t.id));
   const invoiceTotal = selectedTxs.reduce((s, t) => s + docAmt(t), 0);
 
   // Détecte si la sélection mélange en attente et remboursées (info utile pour adapter le titre)
@@ -2752,8 +2774,8 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
     // À l'ouverture, on présélectionne les en attente (cas d'usage dominant)
     setInvoice(inv => ({
       ...inv,
-      selectedIds: pending.map(t => t.id),
-      objet: pending.length > 0 ? L.objetAttente : 'Récapitulatif des dépenses remboursées',
+      selectedIds: docPending.map(t => t.id),
+      objet: docPending.length > 0 ? L.objetAttente : 'Récapitulatif des dépenses remboursées',
     }));
     setInvoiceFilter('pending');
     setInvoiceOpen(true);
@@ -3124,8 +3146,13 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
             </div>
             <h2 className="font-serif text-xl text-stone-900 whitespace-nowrap">{L.titre}</h2>
           </div>
-          <div className="flex gap-2 shrink-0 ml-auto">
-            <Button variant="outline" size="sm" onClick={openInvoice} disabled={reimbursables.length === 0}>
+          <div className="flex gap-2 flex-wrap justify-end ml-auto">
+            {!duScope && (
+              <Button variant="outline" size="sm" onClick={() => onAddParticipation && onAddParticipation()}>
+                <Plus size={14} /> Participation
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={openInvoice} disabled={docItems.length === 0}>
               <FileText size={14} /> {L.doc}
             </Button>
             <Button size="sm" onClick={() => onAdd && onAdd()}>
@@ -3140,7 +3167,7 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
         <Card className="p-5 bg-amber-50/40 border-amber-100">
           <div className="flex items-center gap-3 mb-2">
             <Clock className="text-amber-700" size={20} />
-            <p className="text-xs uppercase tracking-wider text-amber-800">En attente de remboursement</p>
+            <p className="text-xs uppercase tracking-wider text-amber-800">{L.kpiAttente}</p>
           </div>
           <p className="font-serif text-3xl text-stone-900 tabular-nums">{formatEUR(totalPending)}</p>
           <p className="text-sm text-stone-600 mt-1">{plural(pending.length)}</p>
@@ -3148,7 +3175,7 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
         <Card className="p-5 bg-emerald-50/40 border-emerald-100">
           <div className="flex items-center gap-3 mb-2">
             <CheckCircle2 className="text-emerald-700" size={20} />
-            <p className="text-xs uppercase tracking-wider text-emerald-800">Remboursé</p>
+            <p className="text-xs uppercase tracking-wider text-emerald-800">{L.kpiRegle}</p>
           </div>
           <p className="font-serif text-3xl text-stone-900 tabular-nums">{formatEUR(totalCompleted)}</p>
           <p className="text-sm text-stone-600 mt-1">{plural(completed.length)}</p>
@@ -3208,7 +3235,7 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
             {[
               { id: 'all', label: 'Tous', count: reimbursables.length },
               { id: 'pending', label: 'En attente', count: pending.length },
-              { id: 'paid', label: 'Remboursés', count: completed.length },
+              { id: 'paid', label: L.filtreRegle, count: completed.length },
             ].map(f => (
               <button
                 key={f.id}
@@ -3257,7 +3284,7 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
                       <button
                         onClick={() => toggleRembourse(t)}
                         className={`shrink-0 transition ${regle(t) ? 'text-emerald-700' : 'text-stone-400 hover:text-emerald-700'}`}
-                        title={regle(t) ? 'Annuler le remboursement' : 'Marquer comme remboursé'}
+                        title={regle(t) ? (isPart(t) ? 'Marquer comme non versée' : 'Annuler le remboursement') : (isPart(t) ? 'Marquer comme versée' : 'Marquer comme remboursé')}
                       >
                         {regle(t) ? <CheckCircle2 size={20} /> : <Circle size={20} />}
                       </button>
@@ -3276,6 +3303,7 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
                         </div>
                         <div className="flex items-center gap-2 text-xs text-stone-500 mt-0.5 flex-wrap">
                           <span>{formatDateFR(t.date)}</span>
+                          {isPart(t) && <span className="font-medium text-stone-700">Participation</span>}
                           {duScope && debiteurDe(t) && <span className="font-medium text-stone-700">{debiteurDe(t)}</span>}
                           {!regle(t) && recuPart(t) > 0 && (
                             <span className="text-amber-700">reçu {formatEUR(recuPart(t))} · reste {formatEUR(reste(t))}</span>
@@ -3300,7 +3328,7 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
                       <span className={`hidden sm:inline-flex text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded shrink-0 ${
                         regle(t) ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
                       }`}>
-                        {regle(t) ? 'Remboursé' : (recuPart(t) > 0 ? 'Partiel' : 'En attente')}
+                        {regle(t) ? (isPart(t) ? 'Versée' : 'Remboursé') : (recuPart(t) > 0 ? 'Partiel' : 'En attente')}
                       </span>
                       <p className={`font-serif text-base md:text-lg tabular-nums shrink-0 text-right ${regle(t) ? 'text-stone-500' : 'text-stone-900'}`}>
                         {formatEUR(amt(t))}
@@ -3409,9 +3437,9 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], onUpda
             {/* Filtre : en attente / remboursées / toutes */}
             <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl mb-2 w-fit">
               {[
-                { id: 'pending', label: 'En attente', count: pending.length },
-                { id: 'paid', label: 'Remboursées', count: completed.length },
-                { id: 'all', label: 'Toutes', count: reimbursables.length },
+                { id: 'pending', label: 'En attente', count: docPending.length },
+                { id: 'paid', label: 'Remboursées', count: docCompleted.length },
+                { id: 'all', label: 'Toutes', count: docItems.length },
               ].map(f => (
                 <button
                   key={f.id}
@@ -4543,7 +4571,7 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
 // TABLEAU DE BORD
 // ============================================================
 
-const Dashboard = ({ transactions, categories, allTransactions, societePending = 0, societeCount = 0, onOpenSociete, affaireCatIds = [] }) => {
+const Dashboard = ({ transactions, categories, allTransactions, societePending = 0, societeCount = 0, onOpenSociete, affaireCatIds = [], participationCatIds = [] }) => {
   const today = new Date();
   const monthStart = startOfMonth(today);
   const monthEnd = startOfMonth(addMonths(today, 1));
@@ -4571,8 +4599,8 @@ const Dashboard = ({ transactions, categories, allTransactions, societePending =
   // Ce que les autres me doivent encore (les frais de société sont exclus en amont
   // et suivis dans leur propre rubrique)
   const pendingReimb = (allTransactions || transactions)
-    .filter(t => isDu(t, affaireCatIds) && !isDuRegle(t))
-    .reduce((s, t) => s + Math.max(0, montantDu(t, affaireCatIds) - dejaRecu(t)), 0);
+    .filter(t => isDu(t, affaireCatIds, participationCatIds) && !isDuRegle(t))
+    .reduce((s, t) => s + Math.max(0, montantDu(t, affaireCatIds, participationCatIds) - dejaRecu(t)), 0);
 
   const balance = revenue - netExpenses;
 
@@ -5283,6 +5311,7 @@ export default function App() {
   const personalTransactions = useMemo(() => transactions.filter(t => !isSociete(t)), [transactions]);
   // Catégorie(s) « Affaires », et projets / acheteurs déjà saisis (suggestions du formulaire)
   const affaireCatIds = useMemo(() => categories.filter(isAffaireCat).map(c => c.id), [categories]);
+  const participationCatIds = useMemo(() => categories.filter(isParticipationCat).map(c => c.id), [categories]);
   const uniqSorted = (values) => Array.from(new Set(values.map(v => (v || '').trim()).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b, 'fr'));
   const projets = useMemo(() => uniqSorted(transactions.map(t => t.affaire)), [transactions]);
@@ -5339,6 +5368,33 @@ export default function App() {
   // Ouvre le formulaire d'ajout déjà rattaché au bon registre (Société ou Créances)
   // Ouvre le formulaire d'ajout avec la catégorie « Affaires » cochée (créée si elle
   // n'existe pas encore) et le projet pré-rempli s'il est connu
+  // Ajout d'un revenu de participation depuis Société (catégorie créée si besoin)
+  const openParticipationForm = () => {
+    let cat = categories.find(isParticipationCat);
+    if (!cat) {
+      cat = { id: 'cat_participation', name: 'Participation', color: '#6d597a' };
+      const created = cat;
+      setCategories(prev => (prev.some(isParticipationCat) ? prev : [...prev, created]));
+    }
+    setEditingTx(null);
+    setDefaultDate(null);
+    setPrefillTx({
+      id: uuid(),
+      date: toISODate(new Date()),
+      libelle: '',
+      montant: '',
+      type: 'revenu',
+      categorieIds: [cat.id],
+      remboursable: false,
+      remboursableType: 'societe',
+      rembourse: false,
+      recu: false,
+      justificatif: null,
+      notes: '',
+    });
+    setShowTxForm(true);
+  };
+
   const openAffaireForm = (projet = '') => {
     let cat = categories.find(isAffaireCat);
     if (!cat) {
@@ -6019,14 +6075,14 @@ export default function App() {
 
       {/* Contenu */}
       <main className="max-w-7xl mx-auto px-4 md:px-6 py-6">
-        {view === 'dashboard' && <Dashboard transactions={visibleTransactions} categories={categories} allTransactions={personalTransactions} societePending={societePending} societeCount={societePendingTxs.length} onOpenSociete={() => setView('societe')} affaireCatIds={affaireCatIds} />}
+        {view === 'dashboard' && <Dashboard transactions={visibleTransactions} categories={categories} allTransactions={personalTransactions} societePending={societePending} societeCount={societePendingTxs.length} onOpenSociete={() => setView('societe')} affaireCatIds={affaireCatIds} participationCatIds={participationCatIds} />}
         {view === 'times' && <TimeViews transactions={visibleTransactions} categories={categories} />}
         {view === 'cats' && <CategoriesPage transactions={visibleTransactions} allTransactions={transactions} categories={categories} onCategoriesChange={setCategories} />}
         {view === 'calendar' && <CalendarView transactions={visibleTransactions} categories={categories} onAddTx={(date) => { setDefaultDate(date); setShowTxForm(true); }} onEdit={startEdit} onDelete={deleteTransaction} />}
         {view === 'tx' && <TransactionsList transactions={visibleTransactions} categories={categories} onEdit={startEdit} onDelete={deleteTransaction} />}
         {view === 'affaires' && <AffairesView transactions={transactions} categories={categories} affaireCatIds={affaireCatIds} projetsMeta={projetsMeta} onSetTauxMarge={setTauxMarge} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={openAffaireForm} />}
-        {view === 'societe' && <ReimbursableView key="societe" scope="societe" transactions={transactions} categories={categories} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={() => openRegistreForm('societe')} />}
-        {view === 'reimb' && <ReimbursableView key="proximite" scope="proximite" transactions={transactions} categories={categories} affaireCatIds={affaireCatIds} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={() => openRegistreForm('proximite')} />}
+        {view === 'societe' && <ReimbursableView key="societe" scope="societe" transactions={transactions} categories={categories} participationCatIds={participationCatIds} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={() => openRegistreForm('societe')} onAddParticipation={openParticipationForm} />}
+        {view === 'reimb' && <ReimbursableView key="proximite" scope="proximite" transactions={transactions} categories={categories} affaireCatIds={affaireCatIds} participationCatIds={participationCatIds} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={() => openRegistreForm('proximite')} />}
       </main>
 
       {/* Input file invisible : déclenché par le bouton "Importer" dans la modale Paramètres */}
