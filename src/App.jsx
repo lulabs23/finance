@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   Wallet, TrendingUp, TrendingDown, Calendar as CalendarIcon, Upload, Download,
-  Plus, Trash2, Edit2, X, Check, ChevronLeft, ChevronRight, FileText, Image as ImageIcon,
+  Plus, Trash2, Edit2, X, Check, ChevronLeft, ChevronRight, ChevronDown, FileText, Image as ImageIcon,
   Tags, RefreshCw, Receipt, AlertCircle, Search, Home, BarChart3, Clock, FolderOpen,
   CheckCircle2, Circle, Settings, Eye, EyeOff, Building2, User as UserIcon, Pencil, Cloud, Paperclip,
-  Briefcase
+  Briefcase, ArrowLeftRight, SlidersHorizontal
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis,
@@ -527,33 +527,50 @@ const formatFileSize = (bytes) => {
 // ============================================================
 // COMPOSANTS UI ATOMIQUES
 // ============================================================
+// Les couleurs passent par les variables CSS définies dans App (--ink, --line, --pos…),
+// ce qui donne le thème sombre sans dupliquer chaque composant.
 
-const Card = ({ children, className = '' }) => (
-  <div className={`bg-white border border-stone-200/80 rounded-2xl ${className}`}>
+const Card = ({ children, className = '', ...rest }) => (
+  <div className={`f-panel ${className}`} {...rest}>
     {children}
   </div>
 );
 
-const Button = ({ children, onClick, variant = 'primary', size = 'md', className = '', type = 'button', disabled, title }) => {
-  const base = 'inline-flex items-center justify-center gap-2 font-medium transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl';
-  const sizes = {
-    sm: 'px-3 py-1.5 text-sm',
-    md: 'px-4 py-2 text-sm',
-    lg: 'px-5 py-2.5 text-base',
-  };
+const Button = ({ children, onClick, variant = 'primary', size = 'md', className = '', type = 'button', disabled, title, ...rest }) => {
   const variants = {
-    primary: 'bg-stone-900 text-stone-50 hover:bg-stone-800 active:scale-[0.98]',
-    secondary: 'bg-stone-100 text-stone-900 hover:bg-stone-200 active:scale-[0.98]',
-    ghost: 'text-stone-600 hover:bg-stone-100 hover:text-stone-900',
-    danger: 'bg-rose-50 text-rose-700 hover:bg-rose-100',
-    outline: 'border border-stone-300 text-stone-700 hover:bg-stone-50',
+    primary: 'f-btn f-btn-p',
+    secondary: 'f-btn',
+    outline: 'f-btn',
+    ghost: 'f-btn f-btn-g',
+    danger: 'f-btn f-btn-d',
   };
+  const sizes = { sm: 'f-btn-sm', md: '', lg: 'f-btn-lg' };
   return (
-    <button type={type} onClick={onClick} disabled={disabled} title={title} className={`${base} ${sizes[size]} ${variants[variant]} ${className}`}>
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`${variants[variant] || variants.primary} ${sizes[size] || ''} ${className}`}
+      {...rest}
+    >
       {children}
     </button>
   );
 };
+
+const IconButton = ({ label, onClick, children, className = '', danger = false, ...rest }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={label}
+    aria-label={label}
+    className={`f-ibtn ${danger ? 'danger' : ''} ${className}`}
+    {...rest}
+  >
+    {children}
+  </button>
+);
 
 const Input = ({ value, onChange, type = 'text', placeholder, className = '', ...rest }) => (
   <input
@@ -561,48 +578,152 @@ const Input = ({ value, onChange, type = 'text', placeholder, className = '', ..
     value={value ?? ''}
     onChange={onChange}
     placeholder={placeholder}
-    className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-900/10 focus:border-stone-400 transition ${className}`}
+    className={`f-field ${className}`}
     {...rest}
   />
 );
 
-const Select = ({ value, onChange, children, className = '' }) => (
+const Select = ({ value, onChange, children, className = '', ...rest }) => (
   <select
     value={value}
     onChange={onChange}
-    className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900/10 focus:border-stone-400 transition ${className}`}
+    className={`f-field f-select ${className}`}
+    {...rest}
   >
     {children}
   </select>
 );
 
-const Modal = ({ open, onClose, title, children, size = 'md' }) => {
+// Champ avec libellé au-dessus. `as="div"` pour un groupe de boutons (un <label> ne doit
+// contenir qu'un seul contrôle).
+const Field = ({ label, children, className = '', as = 'label', style }) => {
+  const Tag = as;
+  return (
+    <Tag className={`f-fl ${className}`} style={style}>
+      <span className="f-label">{label}</span>
+      {children}
+    </Tag>
+  );
+};
+
+// Contrôle segmenté. options : [{ id, label, count?, icon?, tone? }]
+// tone : 'dark' | 'pos' | 'ok' | 'wait' — couleur de l'option active (sinon fond clair)
+const Seg = ({ options, value, onChange, label, fill = false, className = '' }) => (
+  <div className={`f-seg ${fill ? 'f-seg-fill' : ''} ${className}`} role="group" aria-label={label}>
+    {options.map(o => {
+      const on = value === o.id;
+      return (
+        <button
+          key={o.id}
+          type="button"
+          onClick={() => onChange(o.id)}
+          aria-pressed={on}
+          className={`no-touch-grow ${on ? 'on' : ''} ${on && o.tone ? 'tone-' + o.tone : ''}`}
+        >
+          {o.icon}
+          {o.label}
+          {o.count !== undefined && <span className="ct">{o.count}</span>}
+        </button>
+      );
+    })}
+  </div>
+);
+
+const SearchInput = ({ value, onChange, placeholder = 'Rechercher', className = '', style }) => (
+  <label className={`f-search ${className}`} style={style}>
+    <Search size={15} aria-hidden="true" />
+    <input
+      type="search"
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      aria-label={placeholder}
+      className="f-field"
+    />
+  </label>
+);
+
+const Modal = ({ open, onClose, title, children, size = 'md', footer }) => {
   if (!open) return null;
   const sizes = { sm: 'max-w-md', md: 'max-w-xl', lg: 'max-w-3xl', xl: 'max-w-5xl' };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-sm" onClick={onClose}>
-      <div className={`w-full ${sizes[size]} max-h-[90vh] overflow-hidden bg-white rounded-2xl shadow-2xl flex flex-col`} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
-          <h3 className="font-serif text-xl text-stone-900">{title}</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-900 transition">
-            <X size={20} />
-          </button>
+    <div className="f-overlay fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof title === 'string' ? title : undefined}
+        className={`f-modal w-full ${sizes[size]} max-h-[90vh] flex flex-col`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="f-modal-h">
+          <h3>{title}</h3>
+          <IconButton label="Fermer" onClick={onClose}><X size={16} /></IconButton>
         </div>
-        <div className="overflow-y-auto px-6 py-5">{children}</div>
+        <div className="f-modal-b flex-1 min-h-0 overflow-y-auto overscroll-contain">{children}</div>
+        {footer && <div className="f-modal-f">{footer}</div>}
       </div>
     </div>
   );
 };
 
+// En-tête de rubrique : titre, information courte et actions
+const PageHeader = ({ title, meta, children }) => (
+  <header className="f-page-h">
+    <div className="flex items-baseline gap-3 flex-wrap min-w-0">
+      <h1>{title}</h1>
+      {meta && <span className="t-muted f-num">{meta}</span>}
+    </div>
+    {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
+  </header>
+);
+
+// En-tête d'un panneau
+const PanelHead = ({ title, children }) => (
+  <div className="f-ph">
+    <h2>{title}</h2>
+    {children}
+  </div>
+);
+
+// Bande d'indicateurs séparés par un filet
+const Strip = ({ children, min = 220 }) => (
+  <div className="f-panel overflow-hidden">
+    <div className="f-strip" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(${min}px, 100%), 1fr))` }}>
+      {children}
+    </div>
+  </div>
+);
+
+const Kpi = ({ label, value, sub, valueClass = '', marker, extra }) => (
+  <div className="f-kpi">
+    <div className="flex items-center justify-between gap-2 min-h-[20px]">
+      <span className="f-kpi-l">
+        {marker && <span className="f-sq" style={{ background: marker }} />}
+        {label}
+      </span>
+      {extra}
+    </div>
+    <span className={`f-kpi-v f-num ${valueClass}`}>{value}</span>
+    {sub && <span className="f-kpi-s f-num">{sub}</span>}
+  </div>
+);
+
+// Ligne de répartition : pastille, nom, barre, part et montant
+const BarRow = ({ color, name, ratio, pct, amount, amountClass = 't-ink', icon }) => (
+  <div className="f-barrow">
+    <span className="flex items-center gap-2 min-w-0">
+      {icon || <span className="f-sq" style={{ background: color }} />}
+      <span className="truncate t-ink">{name}</span>
+    </span>
+    <span className="f-track"><span style={{ width: `${Math.max(0, Math.min(100, ratio * 100))}%`, background: color }} /></span>
+    {pct !== undefined && <span className="f-num t-muted text-right">{pct}</span>}
+    <span className={`f-num text-right font-medium ${amountClass}`}>{amount}</span>
+  </div>
+);
+
 const Badge = ({ children, color = '#9c9c9c' }) => (
-  <span
-    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
-    style={{
-      backgroundColor: color + '20',
-      color: color,
-    }}
-  >
-    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
+  <span className="f-cat">
+    <span className="f-sq" style={{ backgroundColor: color }} />
     {children}
   </span>
 );
@@ -614,29 +735,27 @@ const CatBadges = ({ ids, categories, max = 3 }) => {
   const display = ids.slice(0, max);
   const remaining = ids.length - max;
   return (
-    <span className="inline-flex flex-wrap gap-1">
+    <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
       {display.map(id => {
         const c = categories.find(c => c.id === id);
         if (!c) return null;
         return <Badge key={id} color={c.color}>{c.name}</Badge>;
       })}
-      {remaining > 0 && (
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-stone-100 text-stone-600">
-          +{remaining}
-        </span>
-      )}
+      {remaining > 0 && <span className="t-muted">+{remaining}</span>}
     </span>
   );
 };
+
+const PendingBadge = ({ label = 'En attente' }) => (
+  <span className="f-badge f-b-wait"><Clock size={11} /> {label}</span>
+);
 
 // Rappel, sur une dépense affichée pour sa part personnelle, du montant dû par un tiers
 const DuBadge = ({ t }) => {
   if (!(t._du > 0)) return null;
   return (
-    <span className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded shrink-0 ${
-      t._duRegle ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-    }`}>
-      <UserIcon size={9} /> {formatMontantCourt(t._du)} {t._duRegle ? 'remb.' : (t._du > 1 ? 'dus' : 'dû')}
+    <span className={`f-badge ${t._duRegle ? 'f-b-ok' : 'f-b-wait'}`}>
+      <UserIcon size={11} /> {formatMontantCourt(t._du)} {t._duRegle ? 'remb.' : (t._du > 1 ? 'dus' : 'dû')}
     </span>
   );
 };
@@ -646,23 +765,47 @@ const EtalBadge = ({ t }) => {
   if (!t._etal) return null;
   return (
     <span
-      className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded shrink-0 bg-stone-100 text-stone-600"
+      className="f-badge f-b-n f-num"
       title={`Échéance ${t._etal.n} sur ${t._etal.nb} · ${formatEUR(t._etal.total)} au total`}
     >
-      <RefreshCw size={9} /> {t._etal.n}/{t._etal.nb}
+      <RefreshCw size={11} /> {t._etal.n}/{t._etal.nb}
     </span>
   );
 };
 
-const ProgressBar = ({ value, max = 100 }) => (
-  <div className="w-full h-1.5 bg-stone-100 rounded-full overflow-hidden">
-    <div
-      className="h-full bg-stone-900 transition-all duration-300"
-      style={{ width: `${Math.min(100, (value / max) * 100)}%` }}
-    />
-  </div>
+const ProgressBar = ({ value, max = 100, color = 'var(--ink)' }) => (
+  <span className="f-track">
+    <span style={{ width: `${Math.min(100, (value / max) * 100)}%`, background: color }} />
+  </span>
 );
 
+// Actions d'une ligne : modifier / supprimer
+const RowActions = ({ onEdit, onDelete }) => (
+  <span className="flex justify-end gap-0.5 shrink-0">
+    {onEdit && <IconButton label="Modifier" onClick={onEdit}><Pencil size={14} /></IconButton>}
+    {onDelete && <IconButton label="Supprimer" danger onClick={onDelete}><Trash2 size={14} /></IconButton>}
+  </span>
+);
+
+// Bouton trombone pour ouvrir la facture jointe
+const JustifButton = ({ onClick }) => (
+  <IconButton label="Voir la facture jointe" onClick={onClick} className="f-ibtn-xs no-touch-grow">
+    <Paperclip size={13} />
+  </IconButton>
+);
+
+const MOIS_LONGS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+const MOIS_COURTS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+// « 2026-11 » → « Novembre 2026 »
+const libelleMois = (key) => {
+  const [yy, mm] = String(key || '').split('-').map(n => parseInt(n, 10));
+  return yy && mm ? `${MOIS_LONGS[mm - 1]} ${yy}` : 'Sans date';
+};
+// « 2026-11-07 » → « 7 nov. »
+const jourMoisCourt = (iso) => {
+  const [, mm, dd] = String(iso || '').split('-').map(n => parseInt(n, 10));
+  return mm && dd ? `${dd} ${MOIS_COURTS[mm - 1]}` : '';
+};
 // ============================================================
 // PIÈCE JOINTE — sélecteur + viewer
 // ============================================================
@@ -670,7 +813,7 @@ const ProgressBar = ({ value, max = 100 }) => (
 // Affiche une miniature et permet de visualiser/supprimer la pièce jointe.
 // Si pas de pièce jointe, affiche un bouton "Ajouter une facture".
 // Le justificatif est de la forme : { dataUrl, mimeType, sizeBytes, originalName }
-const JustificatifPicker = ({ value, onChange, label = "Facture / Justificatif" }) => {
+const JustificatifPicker = ({ value, onChange, label = "Facture ou justificatif" }) => {
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -696,72 +839,54 @@ const JustificatifPicker = ({ value, onChange, label = "Facture / Justificatif" 
   };
 
   return (
-    <div>
-      <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">{label}</label>
+    <div className="f-fl">
+      <span className="f-label">{label}</span>
       {value ? (
-        <div className="flex items-center gap-3 p-3 bg-stone-50 border border-stone-200 rounded-xl">
+        <div className="flex items-center gap-3 p-2 pr-2.5 rounded-lg" style={{ border: '1px solid var(--line)' }}>
           {value.mimeType && value.mimeType.startsWith('image/') ? (
-            <img
-              src={value.dataUrl}
-              alt="Aperçu"
-              className="w-12 h-12 object-cover rounded-lg cursor-pointer hover:opacity-80 transition border border-stone-200"
-              onClick={() => setViewerOpen(true)}
-            />
+            <button type="button" onClick={() => setViewerOpen(true)} className="shrink-0 no-touch-grow" aria-label="Voir la pièce jointe">
+              <img
+                src={value.dataUrl}
+                alt=""
+                className="w-11 h-11 object-cover rounded-md"
+                style={{ border: '1px solid var(--line)' }}
+              />
+            </button>
           ) : (
-            <div
-              className="w-12 h-12 rounded-lg bg-stone-200 flex items-center justify-center cursor-pointer hover:bg-stone-300 transition"
+            <button
+              type="button"
               onClick={() => setViewerOpen(true)}
+              className="w-11 h-11 rounded-md flex items-center justify-center shrink-0 no-touch-grow"
+              style={{ background: 'var(--n-bg)', color: 'var(--ink-3)' }}
+              aria-label="Voir la pièce jointe"
             >
-              <FileText size={20} className="text-stone-600" />
-            </div>
+              <FileText size={18} />
+            </button>
           )}
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-stone-900 truncate">
-              {value.originalName || 'Pièce jointe'}
-            </p>
-            <p className="text-xs text-stone-500">
+            <p className="truncate font-medium t-ink">{value.originalName || 'Pièce jointe'}</p>
+            <p className="text-xs t-muted f-num">
               {value.mimeType === 'application/pdf' ? 'PDF' : 'Image'} · {formatFileSize(value.sizeBytes)}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setViewerOpen(true)}
-            className="p-1.5 rounded-lg text-stone-600 hover:bg-stone-200 transition"
-            title="Voir"
-          >
-            <Eye size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange(null)}
-            className="p-1.5 rounded-lg text-stone-600 hover:bg-rose-100 hover:text-rose-700 transition"
-            title="Retirer"
-          >
-            <Trash2 size={14} />
-          </button>
+          <IconButton label="Voir" onClick={() => setViewerOpen(true)}><Eye size={15} /></IconButton>
+          <IconButton label="Retirer" danger onClick={() => onChange(null)}><Trash2 size={15} /></IconButton>
         </div>
       ) : (
-        <>
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            disabled={busy}
-            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 border-2 border-dashed border-stone-300 rounded-xl text-sm text-stone-600 hover:border-stone-500 hover:bg-stone-50 transition disabled:opacity-50"
-          >
-            {busy ? (
-              <><RefreshCw size={14} className="animate-spin" /> Traitement…</>
-            ) : (
-              <><Paperclip size={14} /> Ajouter une facture (photo ou PDF)</>
-            )}
-          </button>
-          <p className="text-xs text-stone-400 mt-1.5">
-            Image (JPG, PNG, HEIC) ou PDF · max 10 Mo · les images sont compressées automatiquement
-          </p>
-        </>
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+          className="f-drop"
+        >
+          {busy ? (
+            <><RefreshCw size={15} className="animate-spin" /> Traitement…</>
+          ) : (
+            <><Paperclip size={15} /> Joindre une photo ou un PDF</>
+          )}
+        </button>
       )}
-      {error && (
-        <p className="text-xs text-rose-700 mt-1.5">{error}</p>
-      )}
+      {error && <p className="text-xs t-neg">{error}</p>}
       <input
         ref={inputRef}
         type="file"
@@ -993,70 +1118,60 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
     }
   };
 
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        <button
-          onClick={() => {
-            const fallback = categories.find(c => c.id !== 'cat_revenu')?.id;
-            const next = (tx.categorieIds || []).filter(id => id !== 'cat_revenu');
-            setTx({ ...tx, type: 'dépense', categorieIds: next.length > 0 ? next : (fallback ? [fallback] : []) });
-          }}
-          className={`flex-1 py-2.5 rounded-xl font-medium transition ${
-            tx.type === 'dépense'
-              ? 'bg-stone-900 text-white'
-              : 'bg-stone-50 text-stone-600 hover:bg-stone-100'
-          }`}
-        >
-          Dépense
-        </button>
-        <button
-          onClick={() => setTx({
-            ...tx,
-            type: 'revenu',
-            // une vente garde la catégorie « Affaires » ; sinon catégorie Revenu par défaut
-            categorieIds: affaireOn ? (tx.categorieIds || []).filter(id => affaireCatIds.includes(id)) : ['cat_revenu'],
-          })}
-          className={`flex-1 py-2.5 rounded-xl font-medium transition ${
-            tx.type === 'revenu'
-              ? 'bg-emerald-700 text-white'
-              : 'bg-stone-50 text-stone-600 hover:bg-stone-100'
-          }`}
-        >
-          Revenu
-        </button>
-      </div>
+  const choisirDepense = () => {
+    const fallback = categories.find(c => c.id !== 'cat_revenu')?.id;
+    const next = (tx.categorieIds || []).filter(id => id !== 'cat_revenu');
+    setTx({ ...tx, type: 'dépense', categorieIds: next.length > 0 ? next : (fallback ? [fallback] : []) });
+  };
+  const choisirRevenu = () => setTx({
+    ...tx,
+    type: 'revenu',
+    // une vente garde la catégorie « Affaires » ; sinon catégorie Revenu par défaut
+    categorieIds: affaireOn ? (tx.categorieIds || []).filter(id => affaireCatIds.includes(id)) : ['cat_revenu'],
+  });
 
-      <div>
-        <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Libellé</label>
+  return (
+    <div className="flex flex-col gap-[18px]">
+      <Seg
+        fill
+        label="Type"
+        value={tx.type}
+        onChange={(v) => (v === 'revenu' ? choisirRevenu() : choisirDepense())}
+        options={[
+          { id: 'dépense', label: 'Dépense', tone: 'dark' },
+          { id: 'revenu', label: 'Revenu', tone: 'pos' },
+        ]}
+      />
+
+      <Field label="Libellé">
         <Input
           value={tx.libelle}
           onChange={(e) => setTx({ ...tx, libelle: e.target.value })}
-          placeholder="Ex. Carrefour, Restaurant Le Soleil..."
+          placeholder="Carrefour, Restaurant Le Soleil…"
         />
-      </div>
+      </Field>
 
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Montant (€)</label>
-          <Input
-            type="text"
-            inputMode="decimal"
-            value={tx.montant}
-            onChange={(e) => setTx({ ...tx, montant: e.target.value })}
-            placeholder="0,00"
-          />
-        </div>
-        <div>
-          <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Date</label>
-          <Input type="date" value={tx.date} onChange={(e) => setTx({ ...tx, date: e.target.value })} />
-        </div>
+        <Field label="Montant">
+          <span className="relative flex items-center">
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={tx.montant}
+              onChange={(e) => setTx({ ...tx, montant: e.target.value })}
+              placeholder="0,00"
+              className="f-num"
+              style={{ paddingRight: 28, textAlign: 'right' }}
+            />
+            <span className="absolute right-2.5 t-muted pointer-events-none">€</span>
+          </span>
+        </Field>
+        <Field label="Date">
+          <Input type="date" value={tx.date} onChange={(e) => setTx({ ...tx, date: e.target.value })} className="f-num" />
+        </Field>
       </div>
 
-      <div>
-        <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">
-          Catégories <span className="text-stone-400 normal-case tracking-normal">(une ou plusieurs)</span>
-        </label>
+      <Field as="div" label="Catégories">
         <div className="flex flex-wrap gap-1.5">
           {categories.map(c => {
             const active = (tx.categorieIds || []).includes(c.id);
@@ -1065,232 +1180,208 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
                 key={c.id}
                 type="button"
                 onClick={() => toggleCat(c.id)}
-                className={`px-3 py-1.5 rounded-full text-sm font-medium transition border ${
-                  active
-                    ? 'border-transparent text-white shadow-sm'
-                    : 'border-stone-200 bg-white text-stone-700 hover:border-stone-400'
-                }`}
-                style={active ? { backgroundColor: c.color } : {}}
+                aria-pressed={active}
+                className="f-chip no-touch-grow"
+                style={active ? { borderColor: c.color, backgroundColor: c.color + '2e', fontWeight: 600 } : undefined}
               >
-                <span className="inline-flex items-center gap-1.5">
-                  {!active && <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: c.color }} />}
-                  {c.name}
-                </span>
+                <span className="f-sq" style={{ backgroundColor: c.color }} />
+                {c.name}
+                {active && <Check size={13} />}
               </button>
             );
           })}
         </div>
-      </div>
+      </Field>
 
       {affaireOn && (
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Projet</label>
-            <Input
-              value={tx.affaire}
-              onChange={(e) => setTx({ ...tx, affaire: e.target.value })}
-              placeholder="Nom du projet"
-              list="finances-projets"
-            />
-          </div>
-          {tx.type === 'revenu' && (
-            <div>
-              <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Acheteur</label>
+        <div className="f-inset">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Projet">
               <Input
-                value={tx.acheteur}
-                onChange={(e) => setTx({ ...tx, acheteur: e.target.value })}
-                placeholder="Nom"
-                list="finances-acheteurs"
+                value={tx.affaire}
+                onChange={(e) => setTx({ ...tx, affaire: e.target.value })}
+                placeholder="Nom du projet"
+                list="finances-projets"
               />
-            </div>
-          )}
-          <div>
-            <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">
-              {tx.type === 'revenu' ? 'Quantité vendue' : 'Quantité achetée'}
-            </label>
-            <Input
-              type="text"
-              inputMode="decimal"
-              value={tx.quantite}
-              onChange={(e) => setTx({ ...tx, quantite: e.target.value })}
-              placeholder={tx.type === 'revenu' ? '1' : '—'}
-            />
-          </div>
-          {tx.type === 'revenu' && (
-            <div>
-              <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Réduction (€)</label>
+            </Field>
+            {tx.type === 'revenu' && (
+              <Field label="Acheteur">
+                <Input
+                  value={tx.acheteur}
+                  onChange={(e) => setTx({ ...tx, acheteur: e.target.value })}
+                  placeholder="Nom"
+                  list="finances-acheteurs"
+                />
+              </Field>
+            )}
+            <Field label={tx.type === 'revenu' ? 'Quantité vendue' : 'Quantité achetée'}>
               <Input
                 type="text"
                 inputMode="decimal"
-                value={tx.reduction}
-                onChange={(e) => setTx({ ...tx, reduction: e.target.value })}
-                placeholder="0,00"
+                value={tx.quantite}
+                onChange={(e) => setTx({ ...tx, quantite: e.target.value })}
+                placeholder={tx.type === 'revenu' ? '1' : '—'}
+                className="f-num"
               />
-            </div>
-          )}
+            </Field>
+            {tx.type === 'revenu' && (
+              <Field label="Réduction (€)">
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={tx.reduction}
+                  onChange={(e) => setTx({ ...tx, reduction: e.target.value })}
+                  placeholder="0,00"
+                  className="f-num"
+                />
+              </Field>
+            )}
+          </div>
         </div>
       )}
 
       {tx.type === 'dépense' && (() => {
         const societe = !!tx.remboursable && tx.remboursableType !== 'proximite';
         const du = !!tx.remboursable && tx.remboursableType === 'proximite';
-        const chip = (active) => `flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-sm font-medium transition border ${
-          active
-            ? 'bg-stone-900 text-white border-stone-900'
-            : 'bg-white text-stone-700 border-stone-200 hover:border-stone-400'
-        }`;
         const off = { ...tx, remboursable: false, rembourse: false };
         return (
-          <div>
-            <div className="flex gap-1.5">
+          <div className="flex flex-col gap-3">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
                 aria-pressed={societe}
                 onClick={() => setTx(societe ? off : { ...tx, remboursable: true, remboursableType: 'societe' })}
-                className={chip(societe)}
+                className={`f-toggle ${societe ? 'on' : ''}`}
               >
-                <Building2 size={14} /> <span className="hidden sm:inline">Frais de société</span><span className="sm:hidden">Société</span>
+                <Building2 size={15} /> <span className="hidden sm:inline">Frais de société</span><span className="sm:hidden">Société</span>
               </button>
               <button
                 type="button"
                 aria-pressed={du}
                 onClick={() => setTx(du ? off : { ...tx, remboursable: true, remboursableType: 'proximite' })}
-                className={chip(du)}
+                className={`f-toggle ${du ? 'on' : ''}`}
               >
-                <UserIcon size={14} /> Créance
+                <UserIcon size={15} /> Créance
               </button>
               <button
                 type="button"
                 aria-pressed={!!tx.etalOn}
                 onClick={() => { setTx({ ...tx, etalOn: !tx.etalOn }); setEtalErreur(false); }}
-                className={chip(!!tx.etalOn)}
+                className={`f-toggle ${tx.etalOn ? 'on' : ''}`}
               >
-                <RefreshCw size={14} /> Étaler
+                <RefreshCw size={15} /> Étaler
               </button>
             </div>
+
             {(societe || du) && (
-              <div className="mt-2 bg-amber-50/50 border border-amber-100 rounded-xl p-3 space-y-2.5">
+              <div className="f-inset">
                 {du && (
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Montant dû (€)</label>
+                    <Field label="Montant dû (€)">
                       <Input
                         type="text"
                         inputMode="decimal"
                         value={tx.montantDu}
                         onChange={(e) => setTx({ ...tx, montantDu: e.target.value })}
                         placeholder="Tout le montant"
+                        className="f-num"
                       />
-                    </div>
-                    <div>
-                      <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Débiteur</label>
+                    </Field>
+                    <Field label="Débiteur">
                       <Input
                         value={tx.duPar}
                         onChange={(e) => setTx({ ...tx, duPar: e.target.value })}
                         placeholder="Nom"
                         list="finances-personnes"
                       />
-                    </div>
+                    </Field>
                   </div>
                 )}
-                <div>
-                  <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Remboursement</label>
-                  <div className="flex gap-1.5">
-                    <button
-                      type="button"
-                      aria-pressed={!tx.rembourse}
-                      onClick={() => setTx({ ...tx, rembourse: false })}
-                      className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-sm font-medium transition ${
-                        !tx.rembourse ? 'bg-amber-500 text-white' : 'bg-white text-stone-600 hover:bg-stone-100'
-                      }`}
-                    >
-                      <Clock size={14} /> En attente
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={!!tx.rembourse}
-                      onClick={() => setTx({ ...tx, rembourse: true })}
-                      className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-sm font-medium transition ${
-                        tx.rembourse ? 'bg-emerald-700 text-white' : 'bg-white text-stone-600 hover:bg-stone-100'
-                      }`}
-                    >
-                      <CheckCircle2 size={14} /> Remboursée
-                    </button>
-                  </div>
-                </div>
+                <Field as="div" label="Remboursement">
+                  <Seg
+                    fill
+                    label="Remboursement"
+                    value={tx.rembourse ? 'oui' : 'non'}
+                    onChange={(v) => setTx({ ...tx, rembourse: v === 'oui' })}
+                    options={[
+                      { id: 'non', label: 'En attente', tone: 'wait', icon: <Clock size={14} /> },
+                      { id: 'oui', label: 'Remboursée', tone: 'ok', icon: <CheckCircle2 size={14} /> },
+                    ]}
+                  />
+                </Field>
                 {!tx.rembourse && (
-                  <div>
-                    <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Déjà remboursé (€)</label>
+                  <Field label="Déjà remboursé (€)" className="sm:w-1/2 sm:pr-1.5">
                     <Input
                       type="text"
                       inputMode="decimal"
                       value={tx.dejaRecu}
                       onChange={(e) => setTx({ ...tx, dejaRecu: e.target.value })}
                       placeholder="0,00"
+                      className="f-num"
                     />
-                  </div>
+                  </Field>
                 )}
               </div>
             )}
-          </div>
-        );
-      })()}
 
-      {tx.type === 'dépense' && tx.etalOn && (() => {
-        const seg = (active) => `flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-sm font-medium transition ${
-          active ? 'bg-stone-900 text-white' : 'bg-white text-stone-600 hover:bg-stone-100'
-        }`;
-        const maj = (patch) => { setTx({ ...tx, ...patch }); setEtalErreur(false); };
-        const etal = etalementDuFormulaire(tx);
-        const total = Math.abs(parseFloat(String(tx.montant).replace(',', '.')) || 0);
-        const dates = etal ? datesEtalement(tx.date, etal) : [];
-        const montants = etal && total > 0 ? repartirMontant(total, dates.length) : [];
-        return (
-          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 space-y-2.5">
-            <div className="flex gap-1.5">
-              <button type="button" aria-pressed={tx.etalFreq !== '4semaines'} onClick={() => maj({ etalFreq: 'mois' })} className={seg(tx.etalFreq !== '4semaines')}>
-                Mensuel
-              </button>
-              <button type="button" aria-pressed={tx.etalFreq === '4semaines'} onClick={() => maj({ etalFreq: '4semaines' })} className={seg(tx.etalFreq === '4semaines')}>
-                4 semaines
-              </button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 items-end">
-              <div className="flex gap-1.5">
-                <button type="button" aria-pressed={tx.etalFin !== 'date'} onClick={() => maj({ etalFin: 'nombre' })} className={seg(tx.etalFin !== 'date')}>
-                  Nombre
-                </button>
-                <button type="button" aria-pressed={tx.etalFin === 'date'} onClick={() => maj({ etalFin: 'date' })} className={seg(tx.etalFin === 'date')}>
-                  Jusqu'au
-                </button>
-              </div>
-              {tx.etalFin === 'date' ? (
-                <Input
-                  type="date"
-                  value={tx.etalDate}
-                  min={tx.date}
-                  onChange={(e) => maj({ etalDate: e.target.value })}
-                  aria-label="Date de fin"
-                  style={etalErreur ? { borderColor: '#f43f5e' } : undefined}
-                />
-              ) : (
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  value={tx.etalNombre}
-                  onChange={(e) => maj({ etalNombre: e.target.value })}
-                  placeholder="12"
-                  aria-label="Nombre d'échéances"
-                  style={etalErreur ? { borderColor: '#f43f5e' } : undefined}
-                />
-              )}
-            </div>
-            {etal && montants.length > 1 && (
-              <p className="text-sm text-stone-700 tabular-nums">
-                <span className="font-medium text-stone-900">{dates.length} × {formatEUR(montants[montants.length - 1])}</span>
-                {' · '}{formatDateFR(dates[0])} → {formatDateFR(dates[dates.length - 1])}
-              </p>
-            )}
+            {tx.etalOn && (() => {
+              const maj = (patch) => { setTx({ ...tx, ...patch }); setEtalErreur(false); };
+              const etal = etalementDuFormulaire(tx);
+              const total = Math.abs(parseFloat(String(tx.montant).replace(',', '.')) || 0);
+              const dates = etal ? datesEtalement(tx.date, etal) : [];
+              const montants = etal && total > 0 ? repartirMontant(total, dates.length) : [];
+              const erreurStyle = etalErreur ? { borderColor: '#f43f5e', boxShadow: '0 0 0 1px #f43f5e' } : undefined;
+              return (
+                <div className="f-inset">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+                    <Seg
+                      fill
+                      label="Fréquence"
+                      value={tx.etalFreq === '4semaines' ? '4semaines' : 'mois'}
+                      onChange={(v) => maj({ etalFreq: v })}
+                      options={[{ id: 'mois', label: 'Mensuel' }, { id: '4semaines', label: '4 semaines' }]}
+                    />
+                    <Seg
+                      fill
+                      label="Fin de l'étalement"
+                      value={tx.etalFin === 'date' ? 'date' : 'nombre'}
+                      onChange={(v) => maj({ etalFin: v })}
+                      options={[{ id: 'nombre', label: 'Nombre' }, { id: 'date', label: 'Jusqu’au' }]}
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 items-center">
+                    {tx.etalFin === 'date' ? (
+                      <Input
+                        type="date"
+                        value={tx.etalDate}
+                        min={tx.date}
+                        onChange={(e) => maj({ etalDate: e.target.value })}
+                        aria-label="Date de fin"
+                        className="f-num"
+                        style={erreurStyle}
+                      />
+                    ) : (
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={tx.etalNombre}
+                        onChange={(e) => maj({ etalNombre: e.target.value })}
+                        placeholder="12"
+                        aria-label="Nombre d'échéances"
+                        className="f-num"
+                        style={erreurStyle}
+                      />
+                    )}
+                    {etal && montants.length > 1 && (
+                      <p className="f-num t-ink2">
+                        <span className="font-semibold t-ink">{dates.length} × {formatEUR(montants[montants.length - 1])}</span>
+                        {' · '}{formatDateFR(dates[0])} → {formatDateFR(dates[dates.length - 1])}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         );
       })()}
@@ -1311,53 +1402,42 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
         const recu = tx.recu !== false;
         const participationOn = (tx.categorieIds || []).some(id => participationCatIds.includes(id));
         const avecDebiteur = !recu && !affaireOn && !participationOn;
-        const seg = (active, tone) => `flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-sm font-medium transition ${
-          active ? tone : 'bg-stone-50 text-stone-600 hover:bg-stone-100'
-        }`;
         return (
-          <div>
-            <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Encaissement</label>
-            <div className="flex gap-1.5">
-              <button
-                type="button"
-                aria-pressed={recu}
-                onClick={() => setTx({ ...tx, recu: true })}
-                className={seg(recu, 'bg-emerald-700 text-white')}
-              >
-                <CheckCircle2 size={14} /> Reçu
-              </button>
-              <button
-                type="button"
-                aria-pressed={!recu}
-                onClick={() => setTx({ ...tx, recu: false })}
-                className={seg(!recu, 'bg-amber-500 text-white')}
-              >
-                <Clock size={14} /> En attente
-              </button>
-            </div>
+          <div className="flex flex-col gap-3">
+            <Field as="div" label="Encaissement">
+              <Seg
+                fill
+                label="Encaissement"
+                value={recu ? 'recu' : 'attente'}
+                onChange={(v) => setTx({ ...tx, recu: v === 'recu' })}
+                options={[
+                  { id: 'recu', label: 'Reçu', tone: 'ok', icon: <CheckCircle2 size={14} /> },
+                  { id: 'attente', label: 'En attente', tone: 'wait', icon: <Clock size={14} /> },
+                ]}
+              />
+            </Field>
             {!recu && (
-              <div className={`grid gap-3 mt-2 ${avecDebiteur ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              <div className={`grid gap-3 ${avecDebiteur ? 'grid-cols-2' : 'grid-cols-2'}`}>
                 {avecDebiteur && (
-                  <div>
-                    <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Débiteur</label>
+                  <Field label="Débiteur">
                     <Input
                       value={tx.duPar}
                       onChange={(e) => setTx({ ...tx, duPar: e.target.value })}
                       placeholder="Nom"
                       list="finances-personnes"
                     />
-                  </div>
+                  </Field>
                 )}
-                <div>
-                  <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Déjà reçu (€)</label>
+                <Field label="Déjà reçu (€)">
                   <Input
                     type="text"
                     inputMode="decimal"
                     value={tx.dejaRecu}
                     onChange={(e) => setTx({ ...tx, dejaRecu: e.target.value })}
                     placeholder="0,00"
+                    className="f-num"
                   />
-                </div>
+                </Field>
               </div>
             )}
           </div>
@@ -1369,20 +1449,19 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
         onChange={(v) => setTx({ ...tx, justificatif: v })}
       />
 
-      <div>
-        <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Notes (optionnel)</label>
+      <Field label="Notes">
         <textarea
           value={tx.notes}
           onChange={(e) => setTx({ ...tx, notes: e.target.value })}
           rows={2}
-          className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-900/10 focus:border-stone-400 transition resize-none"
-          placeholder="Détails additionnels..."
+          className="f-field resize-none"
+          placeholder="Facultatif"
         />
-      </div>
+      </Field>
 
-      <div className="flex gap-2 pt-2">
-        <Button variant="secondary" onClick={onCancel} className="flex-1">Annuler</Button>
-        <Button onClick={handleSubmit} className="flex-1">Enregistrer</Button>
+      <div className="f-form-actions">
+        <Button variant="secondary" onClick={onCancel}>Annuler</Button>
+        <Button onClick={handleSubmit}>Enregistrer</Button>
       </div>
     </div>
   );
@@ -1500,23 +1579,64 @@ const ImportModal = ({ open, onClose, onImport, categories }) => {
 
   const ready = pdfScript.loaded && tessScript.loaded;
 
-  return (
-    <Modal open={open} onClose={handleClose} title="Importer un document" size="lg">
-      {step === 'upload' && (
-        <div className="space-y-4">
-          <p className="text-sm text-stone-600 leading-relaxed">
-            Déposez un PDF (relevé bancaire, facture) ou une capture d'écran (PNG/JPEG).
-            Le texte sera extrait automatiquement, puis vous pourrez valider chaque transaction.
-          </p>
+  const etapes = [
+    { id: 'upload', label: 'Fichier' },
+    { id: 'text', label: 'Texte' },
+    { id: 'review', label: 'Vérification' },
+  ];
+  const etapeIdx = etapes.findIndex(e => e.id === step);
+  const nbSelection = detected.filter(t => t._selected).length;
+  const majLigne = (idx, patch) => {
+    const next = [...detected];
+    next[idx] = { ...next[idx], ...patch };
+    setDetected(next);
+  };
 
+  const footer = step === 'text' ? (
+    <>
+      <Button variant="secondary" onClick={() => setStep('upload')}>Retour</Button>
+      <Button onClick={handleDetect}>Détecter les transactions</Button>
+    </>
+  ) : step === 'review' ? (
+    <>
+      <span className="mr-auto f-num t-ink3">{nbSelection} sur {detected.length} sélectionnée{nbSelection > 1 ? 's' : ''}</span>
+      <Button variant="secondary" onClick={() => setStep('text')}>Retour au texte</Button>
+      <Button onClick={handleConfirm} disabled={nbSelection === 0}>
+        Importer {nbSelection} transaction{nbSelection > 1 ? 's' : ''}
+      </Button>
+    </>
+  ) : null;
+
+  return (
+    <Modal open={open} onClose={handleClose} title="Importer un document" size="lg" footer={footer}>
+      <nav aria-label="Étapes" className="f-steps">
+        {etapes.map((e, i) => {
+          const cur = i === etapeIdx;
+          const done = i < etapeIdx;
+          return (
+            <React.Fragment key={e.id}>
+              {i > 0 && <span className="f-steps-sep" aria-hidden="true" />}
+              <span className={`f-step ${cur ? 'cur' : ''} ${done ? 'done' : ''}`} aria-current={cur ? 'step' : undefined}>
+                <b>{done ? <Check size={11} /> : i + 1}</b>{e.label}
+              </span>
+            </React.Fragment>
+          );
+        })}
+      </nav>
+
+      {step === 'upload' && (
+        <div className="flex flex-col gap-4">
           {!ready && (
-            <div className="flex items-center gap-2 text-sm text-stone-500 bg-stone-50 rounded-xl p-3">
-              <RefreshCw size={16} className="animate-spin" />
+            <div className="flex items-center gap-2 t-muted">
+              <RefreshCw size={15} className="animate-spin" />
               Chargement des outils d'analyse…
             </div>
           )}
 
           <div
+            role="button"
+            tabIndex={ready ? 0 : -1}
+            aria-disabled={!ready}
             onDragOver={(e) => { e.preventDefault(); }}
             onDrop={(e) => {
               e.preventDefault();
@@ -1525,14 +1645,15 @@ const ImportModal = ({ open, onClose, onImport, categories }) => {
               if (f) handleFile(f);
             }}
             onClick={() => ready && fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-2xl p-10 text-center transition cursor-pointer ${
-              ready ? 'border-stone-300 hover:border-stone-500 hover:bg-stone-50' : 'border-stone-200 opacity-50'
-            }`}
+            onKeyDown={(e) => {
+              if ((e.key === 'Enter' || e.key === ' ') && ready) { e.preventDefault(); fileInputRef.current?.click(); }
+            }}
+            className={`f-dropzone ${ready ? '' : 'is-off'}`}
           >
-            <Upload className="mx-auto mb-3 text-stone-400" size={32} />
-            <p className="text-stone-700 font-medium">Glissez-déposez votre fichier ici</p>
-            <p className="text-sm text-stone-500 mt-1">ou cliquez pour parcourir</p>
-            <p className="text-xs text-stone-400 mt-3">PDF · PNG · JPEG · max ~10 Mo</p>
+            <span className="f-dropzone-ic"><Upload size={18} /></span>
+            <span className="font-medium t-ink">Déposer un relevé, une facture ou une capture</span>
+            <span className="t-ink3">ou <span className="underline underline-offset-2 t-ink">parcourir</span></span>
+            <span className="text-xs t-muted">PDF, PNG, JPEG · 10 Mo max.</span>
             <input
               ref={fileInputRef}
               type="file"
@@ -1543,10 +1664,10 @@ const ImportModal = ({ open, onClose, onImport, categories }) => {
           </div>
 
           {parsing && (
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-stone-700">{progressLabel}</span>
-                <span className="text-stone-500">{progress}%</span>
+            <div className="flex flex-col gap-2">
+              <div className="flex justify-between gap-3">
+                <span className="t-ink2">{progressLabel}</span>
+                <span className="t-muted f-num">{progress} %</span>
               </div>
               <ProgressBar value={progress} />
             </div>
@@ -1555,173 +1676,128 @@ const ImportModal = ({ open, onClose, onImport, categories }) => {
       )}
 
       {step === 'text' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-stone-600">
-              Texte extrait — éditez si besoin avant la détection automatique :
-            </p>
-            <span className="text-xs text-stone-500">{extractedText.length} caractères</span>
-          </div>
+        <div className="flex flex-col gap-4">
+          <Field label={<span className="flex justify-between gap-3"><span>Texte extrait</span><span className="t-muted font-normal f-num">{extractedText.length} caractères{file ? ` · ${file.name}` : ''}</span></span>}>
+            <textarea
+              value={extractedText}
+              onChange={(e) => setExtractedText(e.target.value)}
+              rows={12}
+              className="f-field f-mono"
+              style={{ background: 'var(--surface-2)', fontSize: 12.5 }}
+            />
+          </Field>
 
-          <details className="group bg-stone-50 border border-stone-200 rounded-xl overflow-hidden">
-            <summary className="px-4 py-2.5 cursor-pointer text-sm font-medium text-stone-700 hover:bg-stone-100 transition list-none flex items-center justify-between">
-              <span className="flex items-center gap-2">
-                <AlertCircle size={14} className="text-stone-500" />
-                Astuce : forcer le type et la catégorie
-              </span>
-              <ChevronRight size={14} className="transition-transform group-open:rotate-90 text-stone-500" />
+          <details className="f-details">
+            <summary>
+              Codes de saisie
+              <ChevronDown size={14} className="f-details-chev" />
             </summary>
-            <div className="px-4 pb-4 pt-2 text-xs text-stone-600 space-y-3 border-t border-stone-200">
-              <div>
-                <p className="font-medium text-stone-800 mb-1">Type (revenu / dépense)</p>
-                <p>Collez <code className="px-1.5 py-0.5 bg-white rounded border border-stone-200 text-stone-900 font-mono">+</code> ou <code className="px-1.5 py-0.5 bg-white rounded border border-stone-200 text-stone-900 font-mono">-</code> directement au montant.</p>
-                <p className="mt-1 text-stone-500">Exemples : <code className="font-mono">+1500,00</code> = revenu · <code className="font-mono">-45,30</code> = dépense.</p>
-                <p className="mt-1 text-stone-500">Sans signe collé, l'app devine via les mots-clés (paiement, salaire, etc.) — défaut : dépense.</p>
-              </div>
-              <div>
-                <p className="font-medium text-stone-800 mb-1">Catégorie</p>
-                <p>Ajoutez <code className="px-1.5 py-0.5 bg-white rounded border border-stone-200 text-stone-900 font-mono">[N]</code> dans la ligne, où N est le numéro ci-dessous. Plusieurs catégories : <code className="font-mono">[1,3]</code> ou <code className="font-mono">[2 5]</code>.</p>
-                <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
-                  {categories.map((c, i) => (
-                    <div key={c.id} className="flex items-center gap-1.5">
-                      <span className="font-mono text-stone-900 w-5 text-right">{i + 1}.</span>
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.color }} />
-                      <span className="text-stone-700">{c.name}</span>
-                    </div>
-                  ))}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 px-3.5 pb-3.5 pt-1 text-[12.5px] t-ink2">
+              <div className="flex flex-col gap-2">
+                <p><code className="f-code">+1500,00</code> revenu · <code className="f-code">-45,30</code> dépense <span className="t-muted">(sans signe : mots-clés, dépense par défaut)</span></p>
+                <p><code className="f-code">[3]</code> catégorie · <code className="f-code">[1,3]</code> ou <code className="f-code">[2 5]</code> plusieurs</p>
+                <p><code className="f-code">[R]</code> société en attente · <code className="f-code">[R*]</code> remboursée</p>
+                <p><code className="f-code">[Rp]</code> proximité en attente · <code className="f-code">[Rp*]</code> remboursée</p>
+                <p className="t-muted">Suffixes acceptés : <code className="f-code">*</code> <code className="f-code">+</code> <code className="f-code">✓</code> · dépenses uniquement</p>
+                <div className="flex flex-col gap-1 pt-1">
+                  <code className="f-code block">15/03/2026 Carrefour [1] -67,50</code>
+                  <code className="f-code block">20/03/2026 Train Paris [3] [R] -89,00</code>
+                  <code className="f-code block">25/03/2026 Salaire [11] +1850,00</code>
                 </div>
               </div>
-              <div>
-                <p className="font-medium text-stone-800 mb-1">Frais de société / avance à un proche</p>
-                <p>
-                  <code className="px-1.5 py-0.5 bg-white rounded border border-stone-200 text-stone-900 font-mono">[R]</code> société (en attente) ·{' '}
-                  <code className="px-1.5 py-0.5 bg-white rounded border border-stone-200 text-stone-900 font-mono">[R*]</code> société (remboursée)
-                </p>
-                <p className="mt-1">
-                  <code className="px-1.5 py-0.5 bg-white rounded border border-stone-200 text-stone-900 font-mono">[Rp]</code> proximité (en attente) ·{' '}
-                  <code className="px-1.5 py-0.5 bg-white rounded border border-stone-200 text-stone-900 font-mono">[Rp*]</code> proximité (remboursée)
-                </p>
-                <p className="mt-1 text-stone-500">Variantes du suffixe acceptées : <code className="font-mono">*</code>, <code className="font-mono">+</code>, <code className="font-mono">✓</code>. Les revenus ne peuvent pas être remboursables.</p>
-              </div>
-              <div className="pt-1 border-t border-stone-200">
-                <p className="font-medium text-stone-800 mb-1">Exemples complets</p>
-                <div className="space-y-1.5">
-                  <code className="block font-mono bg-white px-2 py-1.5 rounded border border-stone-200 text-stone-900">
-                    15/03/2026 Carrefour [1] -67,50
-                  </code>
-                  <code className="block font-mono bg-white px-2 py-1.5 rounded border border-stone-200 text-stone-900">
-                    20/03/2026 Train Paris [3] [R] -89,00
-                  </code>
-                  <code className="block font-mono bg-white px-2 py-1.5 rounded border border-stone-200 text-stone-900">
-                    25/03/2026 Salaire [11] +1850,00
-                  </code>
-                </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 content-start">
+                {categories.map((c, i) => (
+                  <span key={c.id} className="flex items-center gap-1.5 min-w-0">
+                    <span className="f-mono f-num t-muted w-5 text-right shrink-0">{i + 1}</span>
+                    <span className="f-sq" style={{ backgroundColor: c.color }} />
+                    <span className="truncate">{c.name}</span>
+                  </span>
+                ))}
               </div>
             </div>
           </details>
-
-          <textarea
-            value={extractedText}
-            onChange={(e) => setExtractedText(e.target.value)}
-            rows={14}
-            className="w-full px-3 py-2 font-mono text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900/10"
-          />
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setStep('upload')}>← Retour</Button>
-            <Button onClick={handleDetect} className="flex-1">Détecter les transactions</Button>
-          </div>
         </div>
       )}
 
       {step === 'review' && (
-        <div className="space-y-4">
-          <p className="text-sm text-stone-600">
-            <strong>{detected.filter(t => t._selected).length}</strong> transaction(s) sélectionnée(s) sur {detected.length} détectée(s).
-            Décochez celles à ignorer, ajustez si nécessaire.
-          </p>
-          <div className="max-h-[400px] overflow-y-auto border border-stone-200 rounded-xl divide-y divide-stone-100">
-            {detected.map((tx, idx) => (
-              <div key={tx.id} className="p-3 flex items-start gap-3 hover:bg-stone-50">
-                <input
-                  type="checkbox"
-                  checked={tx._selected}
-                  onChange={(e) => {
-                    const next = [...detected];
-                    next[idx]._selected = e.target.checked;
-                    setDetected(next);
-                  }}
-                  className="mt-1 w-4 h-4 rounded border-stone-300"
-                />
-                <div className="flex-1 grid grid-cols-12 gap-1.5 items-center">
+        <div className="overflow-x-auto -mx-1 px-1">
+          <div className="min-w-[700px] rounded-lg" style={{ border: '1px solid var(--line)' }}>
+            <div className="f-rv f-rv-head">
+              <span /><span>Date</span><span>Libellé</span><span className="text-right">Montant</span><span>Catégories</span><span>Remboursement</span>
+            </div>
+            <div className="max-h-[400px] overflow-y-auto">
+              {detected.map((tx, idx) => (
+                <div key={tx.id} className="f-rv" style={{ opacity: tx._selected ? 1 : 0.55 }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Importer cette ligne"
+                    checked={tx._selected}
+                    onChange={(e) => majLigne(idx, { _selected: e.target.checked })}
+                    className="f-check"
+                  />
                   <Input
                     type="date"
                     value={tx.date}
-                    onChange={(e) => {
-                      const next = [...detected];
-                      next[idx].date = e.target.value;
-                      setDetected(next);
-                    }}
-                    className="col-span-3 text-sm py-1.5"
+                    onChange={(e) => majLigne(idx, { date: e.target.value })}
+                    className="f-field-sm f-num"
+                    aria-label="Date"
                   />
                   <Input
                     value={tx.libelle}
-                    onChange={(e) => {
-                      const next = [...detected];
-                      next[idx].libelle = e.target.value;
-                      setDetected(next);
-                    }}
-                    className="col-span-3 text-sm py-1.5"
+                    onChange={(e) => majLigne(idx, { libelle: e.target.value })}
+                    className="f-field-sm"
+                    aria-label="Libellé"
                   />
                   <Input
                     type="number"
                     step="0.01"
                     value={tx.montant}
                     onChange={(e) => {
-                      const next = [...detected];
-                      next[idx].montant = parseFloat(e.target.value) || 0;
-                      next[idx].type = next[idx].montant >= 0 ? 'revenu' : 'dépense';
-                      setDetected(next);
+                      const montant = parseFloat(e.target.value) || 0;
+                      majLigne(idx, { montant, type: montant >= 0 ? 'revenu' : 'dépense' });
                     }}
-                    className="col-span-2 text-sm py-1.5"
+                    className={`f-field-sm f-num text-right ${tx.type === 'revenu' ? 't-pos' : ''}`}
+                    aria-label="Montant"
                   />
-                  <div className="col-span-2 relative">
+                  <div className="relative min-w-0">
                     <button
                       type="button"
                       onClick={() => setOpenCatPicker(openCatPicker === idx ? null : idx)}
-                      className="w-full px-2 py-1.5 text-sm bg-stone-50 border border-stone-200 rounded-xl hover:border-stone-400 transition text-left truncate"
+                      className="f-field f-field-sm flex items-center gap-1.5 text-left no-touch-grow"
+                      aria-expanded={openCatPicker === idx}
                     >
-                      {(tx.categorieIds || []).length === 0
-                        ? <span className="text-stone-400">Aucune</span>
-                        : (tx.categorieIds || []).length === 1
-                          ? categories.find(c => c.id === tx.categorieIds[0])?.name || '—'
-                          : `${tx.categorieIds.length} catégories`}
+                      {(tx.categorieIds || []).length > 0 && (
+                        <span className="flex gap-0.5 shrink-0">
+                          {(tx.categorieIds || []).slice(0, 3).map(id => (
+                            <span key={id} className="f-sq" style={{ backgroundColor: categories.find(c => c.id === id)?.color || '#9c9c9c' }} />
+                          ))}
+                        </span>
+                      )}
+                      <span className="truncate">
+                        {(tx.categorieIds || []).length === 0
+                          ? <span className="t-faint">Aucune</span>
+                          : (tx.categorieIds || []).length === 1
+                            ? categories.find(c => c.id === tx.categorieIds[0])?.name || '—'
+                            : `${tx.categorieIds.length} catégories`}
+                      </span>
                     </button>
                     {openCatPicker === idx && (
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setOpenCatPicker(null)} />
-                        <div className="absolute right-0 top-full mt-1 z-20 w-56 bg-white border border-stone-200 rounded-xl shadow-lg p-2 max-h-60 overflow-y-auto">
+                        <div className="f-pop absolute right-0 top-full mt-1 z-20 w-56 p-1.5 max-h-60 overflow-y-auto">
                           {categories.map(c => {
                             const ids = tx.categorieIds || [];
                             const active = ids.includes(c.id);
                             return (
-                              <label key={c.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-stone-50 cursor-pointer">
+                              <label key={c.id} className="f-pop-item">
                                 <input
                                   type="checkbox"
                                   checked={active}
-                                  onChange={() => {
-                                    const next = [...detected];
-                                    const cur = next[idx].categorieIds || [];
-                                    if (active) {
-                                      next[idx].categorieIds = cur.filter(id => id !== c.id);
-                                    } else {
-                                      next[idx].categorieIds = [...cur, c.id];
-                                    }
-                                    setDetected(next);
-                                  }}
-                                  className="w-4 h-4 rounded border-stone-300"
+                                  onChange={() => majLigne(idx, { categorieIds: active ? ids.filter(id => id !== c.id) : [...ids, c.id] })}
+                                  className="f-check"
                                 />
-                                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: c.color }} />
-                                <span className="text-sm text-stone-700 truncate">{c.name}</span>
+                                <span className="f-sq" style={{ backgroundColor: c.color }} />
+                                <span className="truncate t-ink">{c.name}</span>
                               </label>
                             );
                           })}
@@ -1729,34 +1805,24 @@ const ImportModal = ({ open, onClose, onImport, categories }) => {
                       </>
                     )}
                   </div>
-                  <div className="col-span-2">
-                    <select
-                      value={tx.type === 'revenu' ? 'none' : (tx.remboursable ? (tx.rembourse ? 'paid' : 'pending') : 'none')}
-                      disabled={tx.type === 'revenu'}
-                      onChange={(e) => {
-                        const next = [...detected];
-                        const v = e.target.value;
-                        next[idx].remboursable = v !== 'none';
-                        next[idx].rembourse = v === 'paid';
-                        setDetected(next);
-                      }}
-                      className="w-full px-1.5 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900/10 disabled:opacity-40"
-                      title={tx.type === 'revenu' ? 'Non applicable aux revenus' : 'Statut de remboursement'}
-                    >
-                      <option value="none">Non remb.</option>
-                      <option value="pending">En attente</option>
-                      <option value="paid">Remboursée</option>
-                    </select>
-                  </div>
+                  <select
+                    value={tx.type === 'revenu' ? 'none' : (tx.remboursable ? (tx.rembourse ? 'paid' : 'pending') : 'none')}
+                    disabled={tx.type === 'revenu'}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      majLigne(idx, { remboursable: v !== 'none', rembourse: v === 'paid' });
+                    }}
+                    className="f-field f-select f-field-sm"
+                    aria-label="Remboursement"
+                    title={tx.type === 'revenu' ? 'Non applicable aux revenus' : 'Statut de remboursement'}
+                  >
+                    <option value="none">Non remboursable</option>
+                    <option value="pending">En attente</option>
+                    <option value="paid">Remboursée</option>
+                  </select>
                 </div>
-              </div>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setStep('text')}>← Retour au texte</Button>
-            <Button onClick={handleConfirm} className="flex-1">
-              Importer {detected.filter(t => t._selected).length} transaction(s)
-            </Button>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -1768,7 +1834,7 @@ const ImportModal = ({ open, onClose, onImport, categories }) => {
 // VUES TEMPORELLES
 // ============================================================
 
-const TimeViews = ({ transactions, categories }) => {
+const TimeViews = ({ transactions, categories, isDark = false }) => {
   const [period, setPeriod] = useState('month'); // weeks | month | quarter | year | all | custom
   const [customStart, setCustomStart] = useState(toISODate(addMonths(new Date(), -3)));
   const [customEnd, setCustomEnd] = useState(toISODate(new Date()));
@@ -1923,240 +1989,168 @@ const TimeViews = ({ transactions, categories }) => {
     { id: 'custom', label: 'Personnalisé' },
   ];
 
+  const chartColors = isDark
+    ? { rev: '#6ee7b7', dep: '#e7e5e4', grid: '#3d3835', axis: '#a8a29e' }
+    : { rev: '#047857', dep: '#1c1917', grid: '#f0eeec', axis: '#78716c' };
+  const tooltipStyle = {
+    borderRadius: 8, border: '1px solid var(--line)', background: 'var(--surface)',
+    color: 'var(--ink)', fontSize: 12, boxShadow: 'var(--shadow)',
+  };
+  const fmtPct = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1).replace('.', ',')} %`;
+  const maxOf = (list) => Math.max(1, ...list.map(d => d.value));
+  const expMax = maxOf(expDist);
+  const revMax = maxOf(revDist);
+
+  const TopList = ({ items, revenu }) => (
+    items.length === 0 ? (
+      <p className="t-muted text-center py-8">{revenu ? 'Aucun revenu sur la période.' : 'Aucune dépense sur la période.'}</p>
+    ) : (
+      <div className="flex flex-col">
+        {items.map((t, idx) => (
+          <div key={t.id} className="f-row f-top">
+            <span className="f-num t-muted">{idx + 1}</span>
+            <span className="flex flex-col min-w-0">
+              <span className="truncate font-medium t-ink">{t.libelle}</span>
+              <span className="text-xs t-muted f-num">{formatDateFR(t.date)}</span>
+            </span>
+            <span className="hidden sm:inline-flex text-xs"><CatBadges ids={getCatIds(t)} categories={categories} max={1} /></span>
+            <span className={`f-num text-right font-medium ${revenu ? 't-pos' : 't-ink'}`}>
+              {revenu ? '+' : ''}{formatEUR(Math.abs(t.montant))}
+            </span>
+          </div>
+        ))}
+      </div>
+    )
+  );
+
   return (
-    <div className="space-y-5">
-      {/* Sélecteur de période */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
-          {periodOptions.map(o => (
-            <button
-              key={o.id}
-              onClick={() => setPeriod(o.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                period === o.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
-              }`}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-        {period === 'custom' && (
-          <div className="flex items-center gap-2">
-            <Input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="w-40 text-sm py-1.5" />
-            <span className="text-stone-400">→</span>
-            <Input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="w-40 text-sm py-1.5" />
-          </div>
-        )}
-        <span className="text-xs text-stone-500 ml-auto">
-          {range.label} · {periodTxs.length} transaction{periodTxs.length > 1 ? 's' : ''}
-        </span>
-      </div>
+    <div className="flex flex-col gap-4">
+      <PageHeader
+        title="Analyses"
+        meta={`${range.label} · ${periodTxs.length} transaction${periodTxs.length > 1 ? 's' : ''}`}
+      >
+        <Seg label="Période" value={period} onChange={setPeriod} options={periodOptions} />
+      </PageHeader>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-3 gap-2 md:gap-3">
-        <Card className="p-3 md:p-5">
-          <div className="flex items-center justify-between mb-1 h-4">
-            <p className="text-xs uppercase tracking-wider text-emerald-700">Revenus</p>
-            {rDelta !== null && (
-              <span className={`text-xs font-medium tabular-nums ${rDelta >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                {rDelta >= 0 ? '+' : ''}{rDelta.toFixed(1)}%
-              </span>
-            )}
-          </div>
-          <p className="font-serif text-xl md:text-2xl lg:text-3xl text-emerald-700 tabular-nums">{formatEUR(totalRevenus)}</p>
-          <p className="text-xs text-stone-500 mt-1 truncate">vs {formatEUR(prevRevenus)} <span className="hidden lg:inline">période précédente</span><span className="lg:hidden">précédent</span></p>
-        </Card>
-        <Card className="p-3 md:p-5">
-          <div className="flex items-center justify-between mb-1 h-4">
-            <p className="text-xs uppercase tracking-wider text-stone-500">Dépenses</p>
-            {dDelta !== null && (
-              <span className={`text-xs font-medium tabular-nums ${dDelta <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                {dDelta >= 0 ? '+' : ''}{dDelta.toFixed(1)}%
-              </span>
-            )}
-          </div>
-          <p className="font-serif text-xl md:text-2xl lg:text-3xl text-stone-900 tabular-nums">{formatEUR(totalDepenses)}</p>
-          <p className="text-xs text-stone-500 mt-1 truncate">vs {formatEUR(prevDepenses)} <span className="hidden lg:inline">période précédente</span><span className="lg:hidden">précédent</span></p>
-        </Card>
-        <Card className="p-3 md:p-5">
-          <div className="flex items-center justify-between mb-1 h-4">
-            <p className="text-xs uppercase tracking-wider text-stone-500">Solde</p>
-          </div>
-          <p className={`font-serif text-xl md:text-2xl lg:text-3xl tabular-nums ${solde >= 0 ? 'text-stone-900' : 'text-rose-700'}`}>
-            {solde >= 0 ? '+' : '−'}{formatEUR(Math.abs(solde))}
-          </p>
-          <p className="text-xs text-stone-500 mt-1">
-            {totalRevenus > 0 ? `Taux d'épargne : ${((solde / totalRevenus) * 100).toFixed(1)}%` : 'Aucun revenu sur la période'}
-          </p>
-        </Card>
-      </div>
-
-      {/* Graphique principal — courbe revenus / dépenses */}
-      <Card className="p-5">
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-          <h3 className="font-serif text-lg text-stone-900">Évolution</h3>
-          <div className="flex items-center gap-4 text-xs text-stone-600">
-            <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 bg-emerald-600 rounded" /> Revenus</span>
-            <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 bg-stone-900 rounded" /> Dépenses</span>
-            <span className="text-stone-400">· {granularity === 'day' ? 'par jour' : granularity === 'week' ? 'par semaine' : 'par mois'}</span>
-          </div>
+      {period === 'custom' && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="f-num" style={{ width: 160 }} aria-label="Début" />
+          <span className="t-muted">→</span>
+          <Input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="f-num" style={{ width: 160 }} aria-label="Fin" />
         </div>
+      )}
+
+      <Strip min={200}>
+        <Kpi
+          label="Revenus"
+          marker={chartColors.rev}
+          value={formatEUR(totalRevenus)}
+          valueClass="t-pos"
+          extra={rDelta !== null && <span className={`text-xs font-medium f-num ${rDelta >= 0 ? 't-pos' : 't-neg'}`}>{fmtPct(rDelta)}</span>}
+          sub={`${formatEUR(prevRevenus)} sur la période précédente`}
+        />
+        <Kpi
+          label="Dépenses"
+          marker={chartColors.dep}
+          value={formatEUR(totalDepenses)}
+          extra={dDelta !== null && <span className={`text-xs font-medium f-num ${dDelta <= 0 ? 't-pos' : 't-neg'}`}>{fmtPct(dDelta)}</span>}
+          sub={`${formatEUR(prevDepenses)} sur la période précédente`}
+        />
+        <Kpi
+          label="Solde"
+          value={`${solde >= 0 ? '+' : '−'}${formatEUR(Math.abs(solde))}`}
+          valueClass={solde >= 0 ? 't-ink' : 't-neg'}
+          sub={totalRevenus > 0 ? `Taux d’épargne ${((solde / totalRevenus) * 100).toFixed(1).replace('.', ',')} %` : 'Aucun revenu sur la période'}
+        />
+      </Strip>
+
+      <Card className="overflow-hidden">
+        <PanelHead title="Évolution">
+          <div className="flex items-center gap-4 text-xs t-ink3">
+            <span className="inline-flex items-center gap-1.5"><span className="w-3.5 h-0.5 rounded" style={{ background: chartColors.rev }} /> Revenus</span>
+            <span className="inline-flex items-center gap-1.5"><span className="w-3.5 h-0.5 rounded" style={{ background: chartColors.dep }} /> Dépenses</span>
+            <span className="t-muted">{granularity === 'day' ? 'Par jour' : granularity === 'week' ? 'Par semaine' : 'Par mois'}</span>
+          </div>
+        </PanelHead>
         {seriesData.length === 0 ? (
-          <p className="text-stone-500 text-sm py-8 text-center">Aucune transaction sur la période.</p>
+          <p className="t-muted text-center py-10">Aucune transaction sur la période.</p>
         ) : (
-          <div className="h-72">
+          <div className="h-72 px-2 pt-4 pb-1">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={seriesData} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" vertical={false} />
-                <XAxis dataKey="label" stroke="#78716c" fontSize={11} tickMargin={6} />
-                <YAxis stroke="#78716c" fontSize={11} tickFormatter={(v) => `${Math.round(v)}€`} width={55} />
+              <LineChart data={seriesData} margin={{ top: 5, right: 16, bottom: 5, left: 0 }}>
+                <CartesianGrid stroke={chartColors.grid} vertical={false} />
+                <XAxis dataKey="label" stroke={chartColors.axis} fontSize={11} tickMargin={8} tickLine={false} axisLine={{ stroke: chartColors.grid }} />
+                <YAxis stroke={chartColors.axis} fontSize={11} tickFormatter={(v) => `${Math.round(v)} €`} width={64} tickLine={false} axisLine={false} />
                 <Tooltip
                   formatter={(v, name) => [formatEUR(v), name === 'revenus' ? 'Revenus' : 'Dépenses']}
-                  contentStyle={{ borderRadius: 12, border: '1px solid #e7e5e4', fontSize: 12 }}
+                  contentStyle={tooltipStyle}
+                  labelStyle={{ color: 'var(--muted)', marginBottom: 4 }}
+                  cursor={{ stroke: chartColors.grid, strokeWidth: 1 }}
                 />
-                <Line type="monotone" dataKey="revenus" stroke="#047857" strokeWidth={2.2} dot={{ fill: '#047857', r: 3 }} activeDot={{ r: 5 }} />
-                <Line type="monotone" dataKey="depenses" stroke="#1c1917" strokeWidth={2.2} dot={{ fill: '#1c1917', r: 3 }} activeDot={{ r: 5 }} />
+                <Line type="monotone" dataKey="revenus" stroke={chartColors.rev} strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 2 }} />
+                <Line type="monotone" dataKey="depenses" stroke={chartColors.dep} strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 2 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         )}
+        <div className="f-strip grid-cols-2 md:grid-cols-4" style={{ borderTop: '1px solid var(--line-soft)', background: 'var(--line-soft)' }}>
+          <div className="f-kpi" style={{ paddingTop: 12, paddingBottom: 12 }}><span className="text-xs t-muted">Dépense moyenne par jour</span><span className="f-num text-[15px] font-semibold t-ink">{formatEUR(avgDailyExp)}</span></div>
+          <div className="f-kpi" style={{ paddingTop: 12, paddingBottom: 12 }}><span className="text-xs t-muted">Dépense moyenne par mois</span><span className="f-num text-[15px] font-semibold t-ink">{formatEUR(avgMonthlyExp)}</span></div>
+          <div className="f-kpi" style={{ paddingTop: 12, paddingBottom: 12 }}><span className="text-xs t-muted">Nombre de dépenses</span><span className="f-num text-[15px] font-semibold t-ink">{expenses.length}</span></div>
+          <div className="f-kpi" style={{ paddingTop: 12, paddingBottom: 12 }}><span className="text-xs t-muted">Nombre de revenus</span><span className="f-num text-[15px] font-semibold t-pos">{incomes.length}</span></div>
+        </div>
       </Card>
 
-      {/* Indicateurs secondaires */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="p-4">
-          <p className="text-xs uppercase tracking-wider text-stone-500">Dépense moy. / jour</p>
-          <p className="font-serif text-xl text-stone-900 mt-1 tabular-nums">{formatEUR(avgDailyExp)}</p>
-        </Card>
-        <Card className="p-4">
-          <p className="text-xs uppercase tracking-wider text-stone-500">Dépense moy. / mois</p>
-          <p className="font-serif text-xl text-stone-900 mt-1 tabular-nums">{formatEUR(avgMonthlyExp)}</p>
-        </Card>
-        <Card className="p-4">
-          <p className="text-xs uppercase tracking-wider text-stone-500">Nb dépenses</p>
-          <p className="font-serif text-xl text-stone-900 mt-1 tabular-nums">{expenses.length}</p>
-        </Card>
-        <Card className="p-4">
-          <p className="text-xs uppercase tracking-wider text-stone-500">Nb revenus</p>
-          <p className="font-serif text-xl text-emerald-700 mt-1 tabular-nums">{incomes.length}</p>
-        </Card>
-      </div>
-
-      {/* Donuts catégories */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="p-5">
-          <h3 className="font-serif text-lg text-stone-900 mb-4">Dépenses par catégorie</h3>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <Card>
+          <PanelHead title="Dépenses par catégorie"><span className="f-num t-muted">{formatEUR(totalDepenses)}</span></PanelHead>
           {expDist.length === 0 ? (
-            <p className="text-stone-500 text-sm py-8 text-center">Aucune dépense.</p>
+            <p className="t-muted text-center py-8">Aucune dépense.</p>
           ) : (
-            <div className="grid grid-cols-2 gap-4 items-center">
-              <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={expDist} cx="50%" cy="50%" innerRadius={45} outerRadius={85} paddingAngle={2} dataKey="value">
-                      {expDist.map((e, i) => <Cell key={i} fill={e.color} />)}
-                    </Pie>
-                    <Tooltip formatter={(v) => formatEUR(v)} contentStyle={{ borderRadius: 12, border: '1px solid #e7e5e4', fontSize: 12 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                {expDist.map(c => {
-                  const pct = totalDepenses > 0 ? (c.value / totalDepenses) * 100 : 0;
-                  return (
-                    <div key={c.name} className="flex items-center gap-2 text-xs">
-                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
-                      <span className="flex-1 text-stone-700 truncate">{c.name}</span>
-                      <span className="text-stone-500 tabular-nums">{pct.toFixed(0)}%</span>
-                      <span className="font-medium text-stone-900 tabular-nums w-16 text-right">{formatEUR(c.value)}</span>
-                    </div>
-                  );
-                })}
-              </div>
+            <div className="flex flex-col px-4 py-2">
+              {expDist.map(c => (
+                <BarRow
+                  key={c.name}
+                  color={c.color}
+                  name={c.name}
+                  ratio={c.value / expMax}
+                  pct={`${totalDepenses > 0 ? Math.round((c.value / totalDepenses) * 100) : 0} %`}
+                  amount={formatEUR(c.value)}
+                />
+              ))}
             </div>
           )}
         </Card>
-
-        <Card className="p-5">
-          <h3 className="font-serif text-lg text-stone-900 mb-4">Revenus par catégorie</h3>
+        <Card>
+          <PanelHead title="Revenus par catégorie"><span className="f-num t-muted">{formatEUR(totalRevenus)}</span></PanelHead>
           {revDist.length === 0 ? (
-            <p className="text-stone-500 text-sm py-8 text-center">Aucun revenu.</p>
+            <p className="t-muted text-center py-8">Aucun revenu.</p>
           ) : (
-            <div className="grid grid-cols-2 gap-4 items-center">
-              <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={revDist} cx="50%" cy="50%" innerRadius={45} outerRadius={85} paddingAngle={2} dataKey="value">
-                      {revDist.map((e, i) => <Cell key={i} fill={e.color} />)}
-                    </Pie>
-                    <Tooltip formatter={(v) => formatEUR(v)} contentStyle={{ borderRadius: 12, border: '1px solid #e7e5e4', fontSize: 12 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                {revDist.map(c => {
-                  const pct = totalRevenus > 0 ? (c.value / totalRevenus) * 100 : 0;
-                  return (
-                    <div key={c.name} className="flex items-center gap-2 text-xs">
-                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
-                      <span className="flex-1 text-stone-700 truncate">{c.name}</span>
-                      <span className="text-stone-500 tabular-nums">{pct.toFixed(0)}%</span>
-                      <span className="font-medium text-emerald-700 tabular-nums w-16 text-right">{formatEUR(c.value)}</span>
-                    </div>
-                  );
-                })}
-              </div>
+            <div className="flex flex-col px-4 py-2">
+              {revDist.map(c => (
+                <BarRow
+                  key={c.name}
+                  color={c.color}
+                  name={c.name}
+                  ratio={c.value / revMax}
+                  pct={`${totalRevenus > 0 ? Math.round((c.value / totalRevenus) * 100) : 0} %`}
+                  amount={formatEUR(c.value)}
+                  amountClass="t-pos"
+                />
+              ))}
             </div>
           )}
         </Card>
       </div>
 
-      {/* Tops */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="p-5">
-          <h3 className="font-serif text-lg text-stone-900 mb-4">Top 5 dépenses</h3>
-          {top5Expenses.length === 0 ? (
-            <p className="text-stone-500 text-sm py-4 text-center">Aucune dépense sur la période.</p>
-          ) : (
-            <div className="space-y-2">
-              {top5Expenses.map((t, idx) => (
-                <div key={t.id} className="flex items-center gap-3 p-2.5 bg-stone-50 rounded-xl">
-                  <div className="w-6 h-6 rounded-full bg-stone-900 text-white flex items-center justify-center text-[10px] font-medium shrink-0">
-                    {idx + 1}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-stone-900 truncate text-sm">{t.libelle}</p>
-                    <p className="text-xs text-stone-500">{formatDateFR(t.date)}</p>
-                  </div>
-                  <CatBadges ids={getCatIds(t)} categories={categories} max={1} />
-                  <p className="font-serif text-base text-stone-900 tabular-nums">{formatEUR(Math.abs(t.montant))}</p>
-                </div>
-              ))}
-            </div>
-          )}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <Card className="overflow-hidden">
+          <PanelHead title="Top 5 dépenses" />
+          <TopList items={top5Expenses} />
         </Card>
-
-        <Card className="p-5">
-          <h3 className="font-serif text-lg text-stone-900 mb-4">Top 5 revenus</h3>
-          {top5Incomes.length === 0 ? (
-            <p className="text-stone-500 text-sm py-4 text-center">Aucun revenu sur la période.</p>
-          ) : (
-            <div className="space-y-2">
-              {top5Incomes.map((t, idx) => (
-                <div key={t.id} className="flex items-center gap-3 p-2.5 bg-stone-50 rounded-xl">
-                  <div className="w-6 h-6 rounded-full bg-emerald-700 text-white flex items-center justify-center text-[10px] font-medium shrink-0">
-                    {idx + 1}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-stone-900 truncate text-sm">{t.libelle}</p>
-                    <p className="text-xs text-stone-500">{formatDateFR(t.date)}</p>
-                  </div>
-                  <CatBadges ids={getCatIds(t)} categories={categories} max={1} />
-                  <p className="font-serif text-base text-emerald-700 tabular-nums">+{formatEUR(Math.abs(t.montant))}</p>
-                </div>
-              ))}
-            </div>
-          )}
+        <Card className="overflow-hidden">
+          <PanelHead title="Top 5 revenus" />
+          <TopList items={top5Incomes} revenu />
         </Card>
       </div>
     </div>
@@ -2300,75 +2294,54 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
   const selectedDay = selectedIso ? realDays.find(d => d.iso === selectedIso) || null : null;
 
   return (
-    <Card className="p-4 md:p-5">
-      {/* En-tête : navigation, totaux du mois, choix de la vue */}
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setCursor(addMonths(cursor, -1))} title="Mois précédent">
-            <ChevronLeft size={18} />
-          </Button>
-          <h3 className="font-serif text-xl text-stone-900 capitalize w-44 text-center">{monthName}</h3>
-          <Button variant="ghost" size="sm" onClick={() => setCursor(addMonths(cursor, 1))} title="Mois suivant">
-            <ChevronRight size={18} />
-          </Button>
-          {!isCurrentMonth && (
-            <Button variant="outline" size="sm" onClick={() => setCursor(startOfMonth(new Date()))}>
-              Aujourd'hui
-            </Button>
-          )}
-        </div>
-        <div className="flex items-center gap-4 ml-auto text-right">
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-emerald-700">Revenus</p>
-            <p className="font-serif text-base text-emerald-700 tabular-nums">{formatEUR(monthRevenus)}</p>
-          </div>
-          <div className="w-px h-9 bg-stone-200" />
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-stone-500">Dépenses</p>
-            <p className="font-serif text-base text-stone-900 tabular-nums">{formatEUR(monthDepenses)}</p>
-          </div>
-          <div className="w-px h-9 bg-stone-200" />
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-stone-500">Solde</p>
-            <p className={`font-serif text-base tabular-nums ${monthNet >= 0 ? 'text-stone-900' : 'text-rose-700'}`}>
-              {monthNet >= 0 ? '+' : '−'}{formatEUR(Math.abs(monthNet))}
-            </p>
-          </div>
-        </div>
-      </div>
+    <div className="flex flex-col gap-4">
+      <PageHeader title="Calendrier">
+        <Seg
+          label="Affichage"
+          value={mode}
+          onChange={changeMode}
+          options={[{ id: 'grid', label: 'Grille' }, { id: 'list', label: 'Liste' }]}
+        />
+      </PageHeader>
 
-      {/* Répartition du mois : barre empilée + légende cliquable */}
-      <div className="mb-4 p-3 bg-stone-50 rounded-xl">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <p className="text-[10px] uppercase tracking-wider text-stone-500">
-              Répartition du mois · {monthCount} transaction{monthCount > 1 ? 's' : ''}
-            </p>
-            <div className="flex items-center gap-1 bg-stone-100 p-0.5 rounded-lg shrink-0">
-              {[{ id: 'grid', label: 'Grille' }, { id: 'list', label: 'Liste' }].map(m => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => changeMode(m.id)}
-                  className={`no-touch-grow px-2.5 py-1 rounded-md text-xs font-medium transition ${
-                    mode === m.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
+      <Card className="overflow-hidden">
+        {/* Navigation et totaux du mois */}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-2.5 md:px-4 py-2.5" style={{ borderBottom: '1px solid var(--line)' }}>
+          <div className="flex items-center gap-1">
+            <IconButton label="Mois précédent" onClick={() => setCursor(addMonths(cursor, -1))}><ChevronLeft size={16} /></IconButton>
+            <h2 className="text-[15px] font-semibold t-ink capitalize w-36 text-center">{monthName}</h2>
+            <IconButton label="Mois suivant" onClick={() => setCursor(addMonths(cursor, 1))}><ChevronRight size={16} /></IconButton>
+            {!isCurrentMonth && (
+              <Button variant="secondary" size="sm" className="ml-1" onClick={() => setCursor(startOfMonth(new Date()))}>
+                Aujourd'hui
+              </Button>
+            )}
           </div>
-          {monthCount === 0 && (
-            <p className="text-stone-500 text-sm">Aucune transaction ce mois-ci.</p>
-          )}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 ml-auto">
+            <span className="flex items-baseline gap-2"><span className="t-muted">Revenus</span><span className="f-num text-sm font-semibold t-pos">{formatEUR(monthRevenus)}</span></span>
+            <span className="hidden sm:block w-px h-4" style={{ background: 'var(--line)' }} />
+            <span className="flex items-baseline gap-2"><span className="t-muted">Dépenses</span><span className="f-num text-sm font-semibold t-ink">{formatEUR(monthDepenses)}</span></span>
+            <span className="hidden sm:block w-px h-4" style={{ background: 'var(--line)' }} />
+            <span className="flex items-baseline gap-2"><span className="t-muted">Solde</span><span className={`f-num text-sm font-semibold ${monthNet >= 0 ? 't-ink' : 't-neg'}`}>{monthNet >= 0 ? '+' : '−'}{formatEUR(Math.abs(monthNet))}</span></span>
+          </div>
+        </div>
+
+        {/* Répartition du mois : barre empilée + légende cliquable */}
+        <div className="flex flex-col gap-2.5 px-3 md:px-4 pt-3 pb-3.5" style={{ borderBottom: '1px solid var(--line)' }}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-semibold t-ink">Répartition du mois</span>
+            <span className="f-num t-muted">{monthCount} transaction{monthCount > 1 ? 's' : ''}</span>
+          </div>
+          {monthCount === 0 && <p className="t-muted">Aucune transaction ce mois-ci.</p>}
           {monthDepenses > 0 && (
-            <div className="flex h-2.5 rounded-full overflow-hidden bg-stone-200 mb-2.5">
+            <div className="flex gap-0.5 h-2">
               {legend.filter(c => c.depenses > 0).map(c => (
-                <div
+                <span
                   key={c.id}
                   title={`${c.name} · ${formatEUR(c.depenses)} · ${Math.round((c.depenses / monthDepenses) * 100)} %`}
+                  className="h-2 rounded-sm transition-opacity"
                   style={{
-                    width: `${(c.depenses / monthDepenses) * 100}%`,
+                    flex: `${c.depenses} 1 0px`,
                     backgroundColor: c.color,
                     opacity: focusCat && focusCat !== c.id ? 0.25 : 1,
                   }}
@@ -2376,59 +2349,49 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
               ))}
             </div>
           )}
-          <div className="cal-legend">
-            {legend.map(c => {
-              const active = focusCat === c.id;
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => setFocusCat(active ? null : c.id)}
-                  title={active ? 'Afficher toutes les catégories' : `Mettre en avant « ${c.name} »`}
-                  aria-pressed={active}
-                  className={`no-touch-grow inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition ${
-                    active ? 'font-semibold text-stone-900 shadow-sm' : 'font-medium border-stone-200 bg-white text-stone-700 hover:border-stone-400'
-                  }`}
-                  style={active ? { backgroundColor: withAlpha(c.color, '55'), borderColor: c.color } : {}}
-                >
-                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
-                  <span>{c.name}</span>
-                  {c.depenses > 0 && (
-                    <span className="tabular-nums" style={{ opacity: 0.8 }}>{formatMontantCourt(c.depenses)}</span>
-                  )}
-                  {c.revenus > 0 && (
-                    <span className="tabular-nums text-emerald-700">+{formatMontantCourt(c.revenus)}</span>
-                  )}
-                </button>
-              );
-            })}
-            {focusCat && (
-              <button
-                type="button"
-                onClick={() => setFocusCat(null)}
-                className="no-touch-grow inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium text-stone-600 hover:text-stone-900 hover:bg-stone-100 transition"
-              >
-                <X size={12} /> Tout afficher
-              </button>
-            )}
-          </div>
-      </div>
+          {legend.length > 0 && (
+            <div className="cal-legend">
+              {legend.map(c => {
+                const active = focusCat === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setFocusCat(active ? null : c.id)}
+                    title={active ? 'Afficher toutes les catégories' : `Mettre en avant « ${c.name} »`}
+                    aria-pressed={active}
+                    className="f-chip no-touch-grow"
+                    style={active ? { borderColor: 'var(--ink)', backgroundColor: withAlpha(c.color, '40') } : undefined}
+                  >
+                    <span className="f-sq" style={{ backgroundColor: c.color }} />
+                    <span className="font-medium t-ink">{c.name}</span>
+                    {c.depenses > 0 && <span className="f-num t-ink3">{formatMontantCourt(c.depenses)}</span>}
+                    {c.revenus > 0 && <span className="f-num t-pos">+{formatMontantCourt(c.revenus)}</span>}
+                  </button>
+                );
+              })}
+              {focusCat && (
+                <Button variant="ghost" size="sm" className="no-touch-grow" onClick={() => setFocusCat(null)}>
+                  <X size={13} /> Tout afficher
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
 
-      {/* ===================== VUE GRILLE ===================== */}
-      {mode === 'grid' && (
-        <>
-          <div className="cal-grid mb-1.5 text-[10px] md:text-xs uppercase tracking-wider text-stone-500 text-center">
-            {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => (
-              <div key={d} className="py-1">{d}</div>
-            ))}
-            <div className="cal-desktop py-1">Semaine</div>
-          </div>
-
-          <div className="space-y-1 md:space-y-1.5">
+        {/* ===================== VUE GRILLE ===================== */}
+        {mode === 'grid' && (
+          <div>
+            <div className="cal-grid" style={{ background: 'var(--surface-2)', borderBottom: '1px solid var(--line)' }}>
+              {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => (
+                <span key={d} className="cal-wd">{d}</span>
+              ))}
+              <span className="cal-wd cal-desktop text-right">Semaine</span>
+            </div>
             {weeks.map((w, wi) => (
-              <div key={wi} className="cal-grid">
+              <div key={wi} className="cal-grid" style={{ borderBottom: '1px solid var(--line-soft)' }}>
                 {w.cells.map((d, idx) => {
-                  if (!d) return <div key={`vide-${wi}-${idx}`} className="cal-cell" />;
+                  if (!d) return <span key={`vide-${wi}-${idx}`} className="cal-cell empty" />;
                   const isToday = todayIso === d.iso;
                   return (
                     <div
@@ -2440,46 +2403,44 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
                         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedIso(d.iso); }
                       }}
                       title={d.count === 0 ? 'Ajouter une transaction' : undefined}
-                      className="cal-cell rounded-lg md:rounded-xl p-1 md:p-1.5 flex flex-col gap-1 cursor-pointer transition bg-stone-50 hover:bg-stone-100 text-left"
+                      aria-label={d.date.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
+                      className="cal-cell"
                     >
-                      <div className="flex items-center justify-between gap-1">
-                        <span className={`inline-flex items-center justify-center text-[11px] md:text-xs font-medium rounded-full ${
-                          isToday ? 'w-5 h-5 bg-stone-900 text-stone-50' : 'text-stone-500'
-                        }`}>
-                          {d.date.getDate()}
-                        </span>
+                      <span className="flex items-center justify-between gap-1">
+                        <span className={`cal-num f-num ${isToday ? 'today' : ''}`}>{d.date.getDate()}</span>
                         {d.nbDepenses > 1 && (
-                          <span className="cal-desktop text-[11px] font-semibold tabular-nums text-stone-700" title="Total des dépenses du jour">
+                          <span className="cal-desktop f-num text-[11.5px] font-semibold t-ink2" title="Total des dépenses du jour">
                             −{formatMontantCourt(d.depenses)}
                           </span>
                         )}
-                      </div>
-
+                      </span>
                       {d.txs.map(t => {
                         const cols = txColors(t);
                         const isRev = t.type === 'revenu';
                         const enAttente = (isRev && t.recu === false) || (t._du > 0 && !t._duRegle);
                         return (
-                          <div
+                          <span
                             key={t.id}
                             title={txTitle(t)}
-                            className="cal-chip flex items-stretch rounded overflow-hidden text-stone-900"
+                            className="cal-chip"
                             style={{
-                              backgroundColor: withAlpha(cols[0], '30'),
+                              backgroundColor: withAlpha(cols[0], '26'),
                               opacity: matchesFocus(t) ? 1 : 0.2,
-                              outline: enAttente ? '1px dashed rgba(180, 83, 9, 0.7)' : 'none',
+                              outline: enAttente ? '1px dashed var(--warn)' : 'none',
                               outlineOffset: '-1px',
                             }}
                           >
-                            <span className="shrink-0" style={{ width: 4, background: stripeBackground(cols) }} />
-                            <span className="cal-desktop flex-1 min-w-0 truncate pl-1.5 pr-1 text-[11px] leading-5">{t.libelle}</span>
-                            <span className={`cal-desktop shrink-0 pr-1.5 text-[11px] leading-5 font-medium tabular-nums ${isRev ? 'text-emerald-700' : ''}`}>
+                            <span className="cal-desktop cal-dots">
+                              {cols.map((col, i) => <span key={i} className="cal-dot" style={{ backgroundColor: col }} />)}
+                            </span>
+                            <span className="cal-desktop flex-1 min-w-0 truncate">{t.libelle}</span>
+                            <span className={`cal-desktop shrink-0 f-num font-medium ${isRev ? 't-pos' : ''}`}>
                               {isRev ? '+' : '−'}{formatMontantCourt(t.montant, false)}
                             </span>
-                            <span className={`cal-mobile flex-1 min-w-0 text-center text-[10px] leading-4 font-medium tabular-nums ${isRev ? 'text-emerald-700' : ''}`}>
+                            <span className={`cal-mobile flex-1 min-w-0 text-center f-num font-medium ${isRev ? 't-pos' : ''}`}>
                               {isRev ? '+' : ''}{Math.round(Math.abs(t.montant))}
                             </span>
-                          </div>
+                          </span>
                         );
                       })}
                     </div>
@@ -2487,81 +2448,82 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
                 })}
 
                 {/* Sous-total de la semaine (ordinateur uniquement) */}
-                <div className="cal-week-cell rounded-xl px-1.5 py-1.5 flex-col items-end justify-start gap-0.5 border border-stone-100">
-                  {w.depenses > 0 && (
-                    <span className="text-xs font-semibold tabular-nums text-stone-900">−{formatMontantCourt(Math.round(w.depenses))}</span>
-                  )}
-                  {w.revenus > 0 && (
-                    <span className="text-xs font-medium tabular-nums text-emerald-700">+{formatMontantCourt(Math.round(w.revenus))}</span>
-                  )}
-                  {w.depenses === 0 && w.revenus === 0 && <span className="text-xs text-stone-400">—</span>}
-                </div>
+                <span className="cal-week">
+                  {w.depenses > 0 && <span className="f-num text-xs font-semibold t-ink">−{formatMontantCourt(Math.round(w.depenses))}</span>}
+                  {w.revenus > 0 && <span className="f-num text-xs font-medium t-pos">+{formatMontantCourt(Math.round(w.revenus))}</span>}
+                  {w.depenses === 0 && w.revenus === 0 && <span className="text-xs t-faint">—</span>}
+                </span>
               </div>
             ))}
           </div>
-        </>
-      )}
+        )}
 
-      {/* ===================== VUE LISTE ===================== */}
-      {mode === 'list' && (
-        <div className="space-y-2">
-          {realDays.filter(d => d.count > 0).map(d => (
-            <div key={d.iso} className="flex items-start gap-3 p-2.5 bg-stone-50 rounded-xl">
-              <button
-                type="button"
-                onClick={() => setSelectedIso(d.iso)}
-                title="Détail du jour"
-                className="w-11 shrink-0 text-center rounded-lg hover:bg-stone-100 transition py-0.5"
-              >
-                <span className="block text-[10px] uppercase tracking-wider text-stone-500">
-                  {d.date.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', '')}
-                </span>
-                <span className={`block font-serif text-xl leading-tight ${todayIso === d.iso ? 'text-emerald-700' : 'text-stone-900'}`}>
-                  {d.date.getDate()}
-                </span>
-              </button>
-              <div className="flex-1 min-w-0 space-y-1">
-                {d.txs.map(t => {
-                  const cols = txColors(t);
-                  const isRev = t.type === 'revenu';
-                  const names = knownCatIds(t).map(id => catMap[id].name).join(' · ') || 'Sans catégorie';
-                  const enAttente = (isRev && t.recu === false) || (t._du > 0 && !t._duRegle);
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => onEdit && onEdit(t)}
-                      title="Modifier"
-                      className="w-full flex items-stretch rounded-lg overflow-hidden text-left text-stone-900 transition"
-                      style={{
-                        backgroundColor: withAlpha(cols[0], '30'),
-                        opacity: matchesFocus(t) ? 1 : 0.2,
-                        outline: enAttente ? '1px dashed rgba(180, 83, 9, 0.7)' : 'none',
-                        outlineOffset: '-1px',
-                      }}
-                    >
-                      <span className="shrink-0" style={{ width: 4, background: stripeBackground(cols) }} />
-                      <span className="flex-1 min-w-0 px-2.5 py-1.5">
-                        <span className="block text-sm font-medium truncate">{t.libelle}</span>
-                        <span className="block text-[11px] text-stone-600 truncate">{names}{enAttente ? ' · en attente' : ''}</span>
-                      </span>
-                      <span className={`shrink-0 self-center pr-2.5 text-sm font-medium tabular-nums ${isRev ? 'text-emerald-700' : ''}`}>
-                        {isRev ? '+' : '−'}{formatEUR(Math.abs(t.montant))}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              {d.count > 1 && (
-                <div className="cal-desktop shrink-0 w-24 text-right pt-1">
-                  {d.depenses > 0 && <p className="text-sm font-semibold tabular-nums text-stone-900">−{formatEUR(d.depenses)}</p>}
-                  {d.revenus > 0 && <p className="text-sm font-medium tabular-nums text-emerald-700">+{formatEUR(d.revenus)}</p>}
+        {/* ===================== VUE LISTE ===================== */}
+        {mode === 'list' && (
+          <div className="flex flex-col">
+            {realDays.filter(d => d.count > 0).length === 0 && (
+              <p className="t-muted text-center py-10">Aucune transaction ce mois-ci.</p>
+            )}
+            {realDays.filter(d => d.count > 0).map(d => (
+              <div key={d.iso} className="flex items-start gap-3 md:gap-4 px-3 md:px-4 py-3" style={{ borderBottom: '1px solid var(--line-soft)' }}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedIso(d.iso)}
+                  title="Détail du jour"
+                  className="f-hov w-11 shrink-0 flex flex-col items-center rounded-md py-0.5 no-touch-grow"
+                >
+                  <span className="text-[11.5px] t-muted">
+                    {d.date.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', '')}
+                  </span>
+                  <span className={`f-num text-lg font-semibold leading-tight ${todayIso === d.iso ? 't-pos' : 't-ink'}`}>
+                    {d.date.getDate()}
+                  </span>
+                </button>
+                <div className="flex-1 min-w-0 flex flex-col gap-1">
+                  {d.txs.map(t => {
+                    const cols = txColors(t);
+                    const isRev = t.type === 'revenu';
+                    const names = knownCatIds(t).map(id => catMap[id].name).join(' · ') || 'Sans catégorie';
+                    const enAttente = (isRev && t.recu === false) || (t._du > 0 && !t._duRegle);
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => onEdit && onEdit(t)}
+                        title="Modifier"
+                        className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-left transition-opacity"
+                        style={{
+                          backgroundColor: withAlpha(cols[0], '26'),
+                          opacity: matchesFocus(t) ? 1 : 0.2,
+                          outline: enAttente ? '1px dashed var(--warn)' : 'none',
+                          outlineOffset: '-1px',
+                        }}
+                      >
+                        <span className="flex flex-col gap-0.5 shrink-0">
+                          {cols.map((col, i) => <span key={i} className="f-sq" style={{ backgroundColor: col }} />)}
+                        </span>
+                        <span className="flex-1 min-w-0 flex flex-col">
+                          <span className="truncate font-medium t-ink">{t.libelle}</span>
+                          <span className="truncate text-xs t-ink3">{names}{enAttente ? ' · en attente' : ''}</span>
+                        </span>
+                        <span className={`shrink-0 f-num font-medium ${isRev ? 't-pos' : 't-ink'}`}>
+                          {isRev ? '+' : '−'}{formatEUR(Math.abs(t.montant))}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+                {d.count > 1 && (
+                  <div className="cal-desktop shrink-0 w-28 text-right pt-1.5">
+                    {d.depenses > 0 && <p className="f-num font-semibold t-ink">−{formatEUR(d.depenses)}</p>}
+                    {d.revenus > 0 && <p className="f-num font-medium t-pos">+{formatEUR(d.revenus)}</p>}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       <Modal
         open={!!selectedDay}
@@ -2569,13 +2531,13 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
         title={selectedDay ? selectedDay.date.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : ''}
       >
         {selectedDay && (
-          <div className="space-y-4">
+          <div className="flex flex-col gap-3 -mt-1">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="text-sm">
-                <span className="text-stone-600">{selectedDay.count} transaction{selectedDay.count > 1 ? 's' : ''}</span>
-                {selectedDay.revenus > 0 && <span className="ml-3 text-emerald-700">+{formatEUR(selectedDay.revenus)}</span>}
-                {selectedDay.depenses > 0 && <span className="ml-3 text-stone-900">−{formatEUR(selectedDay.depenses)}</span>}
-              </div>
+              <span className="flex flex-wrap gap-x-3.5 f-num">
+                <span className="t-muted">{selectedDay.count} transaction{selectedDay.count > 1 ? 's' : ''}</span>
+                {selectedDay.revenus > 0 && <span className="font-medium t-pos">+{formatEUR(selectedDay.revenus)}</span>}
+                {selectedDay.depenses > 0 && <span className="font-medium t-ink">−{formatEUR(selectedDay.depenses)}</span>}
+              </span>
               <Button size="sm" onClick={() => {
                 onAddTx(selectedDay.iso);
                 setSelectedIso(null);
@@ -2584,52 +2546,28 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
               </Button>
             </div>
             {selectedDay.txs.length === 0 ? (
-              <p className="text-stone-500 text-sm">Aucune transaction ce jour-là.</p>
+              <p className="t-muted py-4">Aucune transaction ce jour-là.</p>
             ) : (
-              <div className="space-y-2">
+              <div className="flex flex-col -mx-5">
                 {selectedDay.txs.map(t => (
-                  <div key={t.id} className="group flex items-center gap-3 p-3 bg-stone-50 rounded-xl hover:bg-stone-100 transition">
-                    <span className="self-stretch shrink-0 rounded-full" style={{ width: 4, background: stripeBackground(txColors(t)) }} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium text-stone-900 truncate">{t.libelle}</p>
-                        {t.justificatif && (
-                          <button
-                            onClick={() => setViewingJustif(t.justificatif)}
-                            className="no-touch-grow text-stone-500 hover:text-stone-900 transition shrink-0"
-                            title="Voir la facture jointe"
-                          >
-                            <Paperclip size={12} />
-                          </button>
-                        )}
+                  <div key={t.id} className="f-row f-dayrow f-line">
+                    <span className="w-2.5 h-2.5 rounded-[3px]" style={{ background: stripeBackground(txColors(t)) }} />
+                    <div className="min-w-0 flex flex-col gap-1">
+                      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                        <span className="font-medium t-ink truncate">{t.libelle}</span>
+                        {t.justificatif && <JustifButton onClick={() => setViewingJustif(t.justificatif)} />}
                         <DuBadge t={t} /><EtalBadge t={t} />
-                        {t.type === 'revenu' && t.recu === false && (
-                          <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 shrink-0">
-                            <Clock size={9} /> En attente
-                          </span>
-                        )}
+                        {t.type === 'revenu' && t.recu === false && <PendingBadge />}
                       </div>
-                      <CatBadges ids={getCatIds(t)} categories={categories} max={3} />
+                      <span className="text-xs"><CatBadges ids={getCatIds(t)} categories={categories} max={3} /></span>
                     </div>
-                    <p className={`font-serif text-lg tabular-nums shrink-0 ${t.type === 'revenu' ? 'text-emerald-700' : 'text-stone-900'}`}>
+                    <span className={`f-num text-sm font-semibold ${t.type === 'revenu' ? 't-pos' : 't-ink'}`}>
                       {t.type === 'revenu' ? '+' : '−'}{formatEUR(Math.abs(t.montant))}
-                    </p>
-                    <div className="flex gap-1 opacity-60 group-hover:opacity-100 transition shrink-0">
-                      <button
-                        onClick={() => { onEdit && onEdit(t); setSelectedIso(null); }}
-                        className="p-1.5 rounded-lg hover:bg-white text-stone-600 hover:text-stone-900 transition"
-                        title="Modifier"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        onClick={() => { onDelete && onDelete(t.id); setSelectedIso(null); }}
-                        className="p-1.5 rounded-lg hover:bg-white text-stone-600 hover:text-rose-600 transition"
-                        title="Supprimer"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
+                    </span>
+                    <RowActions
+                      onEdit={() => { onEdit && onEdit(t); setSelectedIso(null); }}
+                      onDelete={() => { onDelete && onDelete(t.id); setSelectedIso(null); }}
+                    />
                   </div>
                 ))}
               </div>
@@ -2643,7 +2581,7 @@ const CalendarView = ({ transactions, categories, onAddTx, onEdit, onDelete }) =
         onClose={() => setViewingJustif(null)}
         justificatif={viewingJustif}
       />
-    </Card>
+    </div>
   );
 };
 
@@ -2824,8 +2762,8 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], partic
     line-height: 1.5;
   }
   h1 {
-    font-family: Georgia, serif;
-    font-weight: 500;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 600;
     font-size: 28px;
     margin: 0 0 4px 0;
     letter-spacing: -0.5px;
@@ -2900,7 +2838,7 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], partic
   }
   .total-row td:last-child {
     text-align: right;
-    font-family: Georgia, serif;
+    font-variant-numeric: tabular-nums;
     font-size: 18px;
   }
   .footer {
@@ -2932,8 +2870,8 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], partic
 </head>
 <body>
   <div class="no-print" style="text-align:right;margin-bottom:16px;">
-    <button onclick="window.print()" style="background:#1c1917;color:white;border:none;padding:10px 20px;border-radius:8px;font-size:13px;cursor:pointer;font-weight:500;">
-      🖨️ Imprimer / Enregistrer en PDF
+    <button onclick="window.print()" style="background:#1c1917;color:white;border:none;padding:9px 16px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:500;">
+      Imprimer / Enregistrer en PDF
     </button>
   </div>
 
@@ -3135,296 +3073,231 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], partic
 
   const plural = (n) => `${n} ${n > 1 ? L.unitePluriel : L.unite}`;
 
+  const sideItems = duScope ? personBreakdown : catBreakdown;
+  const withAnnexe = selectedTxs.filter(t => t.justificatif && t.justificatif.mimeType?.startsWith('image/')).length;
+
   return (
-    <div className="space-y-4">
-      {/* En-tête de la rubrique */}
-      <Card className="p-5">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-stone-900 flex items-center justify-center shrink-0">
-              <ScopeIcon className="text-stone-50" size={18} />
-            </div>
-            <h2 className="font-serif text-xl text-stone-900 whitespace-nowrap">{L.titre}</h2>
-          </div>
-          <div className="flex gap-2 flex-wrap justify-end ml-auto">
-            {!duScope && (
-              <Button variant="outline" size="sm" onClick={() => onAddParticipation && onAddParticipation()}>
-                <Plus size={14} /> Participation
-              </Button>
+    <div className="flex flex-col gap-4">
+      <PageHeader title={L.titre}>
+        {!duScope && (
+          <Button variant="secondary" onClick={() => onAddParticipation && onAddParticipation()}>
+            <Plus size={15} /> Participation
+          </Button>
+        )}
+        <Button variant="secondary" onClick={openInvoice} disabled={docItems.length === 0}>
+          <FileText size={15} /> {L.doc}
+        </Button>
+        <Button onClick={() => onAdd && onAdd()}>
+          <Plus size={15} /> {L.ajouter}
+        </Button>
+      </PageHeader>
+
+      <Strip min={220}>
+        <Kpi label={L.kpiAttente} marker="var(--m-wait-2)" value={formatEUR(totalPending)} sub={plural(pending.length)} />
+        <Kpi label={L.kpiRegle} marker="var(--m-ok)" value={formatEUR(totalCompleted)} sub={plural(completed.length)} />
+        <Kpi label={L.kpiTotal} value={formatEUR(totalPending + totalCompleted)} sub={plural(reimbursables.length)} />
+      </Strip>
+
+      <div className="flex flex-wrap gap-4 items-start">
+        {/* Liste complète, regroupée par mois */}
+        <Card className="overflow-hidden min-w-0" style={{ flex: '999 1 560px' }}>
+          <div className="flex flex-wrap items-center gap-2 px-3 md:px-4 py-3">
+            <Seg
+              label="Statut"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { id: 'all', label: 'Tous', count: reimbursables.length },
+                { id: 'pending', label: 'En attente', count: pending.length },
+                { id: 'paid', label: L.filtreRegle, count: completed.length },
+              ]}
+            />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: '1 1 180px' }} />
+            {listed.length > 0 && (
+              <span className="f-num t-muted ml-auto">
+                {plural(listed.length)} · <span className="font-medium t-ink">{formatEUR(listedTotal)}</span>
+              </span>
             )}
-            <Button variant="outline" size="sm" onClick={openInvoice} disabled={docItems.length === 0}>
-              <FileText size={14} /> {L.doc}
-            </Button>
-            <Button size="sm" onClick={() => onAdd && onAdd()}>
-              <Plus size={14} /> {L.ajouter}
-            </Button>
           </div>
-        </div>
-      </Card>
 
-      {/* Indicateurs */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="p-5 bg-amber-50/40 border-amber-100">
-          <div className="flex items-center gap-3 mb-2">
-            <Clock className="text-amber-700" size={20} />
-            <p className="text-xs uppercase tracking-wider text-amber-800">{L.kpiAttente}</p>
-          </div>
-          <p className="font-serif text-3xl text-stone-900 tabular-nums">{formatEUR(totalPending)}</p>
-          <p className="text-sm text-stone-600 mt-1">{plural(pending.length)}</p>
-        </Card>
-        <Card className="p-5 bg-emerald-50/40 border-emerald-100">
-          <div className="flex items-center gap-3 mb-2">
-            <CheckCircle2 className="text-emerald-700" size={20} />
-            <p className="text-xs uppercase tracking-wider text-emerald-800">{L.kpiRegle}</p>
-          </div>
-          <p className="font-serif text-3xl text-stone-900 tabular-nums">{formatEUR(totalCompleted)}</p>
-          <p className="text-sm text-stone-600 mt-1">{plural(completed.length)}</p>
-        </Card>
-        <Card className="p-5">
-          <div className="flex items-center gap-3 mb-2">
-            <ScopeIcon className="text-stone-500" size={20} />
-            <p className="text-xs uppercase tracking-wider text-stone-500">{L.kpiTotal}</p>
-          </div>
-          <p className="font-serif text-3xl text-stone-900 tabular-nums">{formatEUR(totalPending + totalCompleted)}</p>
-          <p className="text-sm text-stone-600 mt-1">{plural(reimbursables.length)}</p>
-        </Card>
-      </div>
-
-      {/* En attente par débiteur (rubrique « Créances ») */}
-      {duScope && personBreakdown.length > 0 && (
-        <Card className="p-5">
-          <h3 className="font-serif text-lg text-stone-900 mb-3">En attente par débiteur</h3>
-          <div className="space-y-2">
-            {personBreakdown.map(p => (
-              <div key={p.name} className="flex items-center gap-3">
-                <UserIcon size={14} className="text-stone-500 shrink-0" />
-                <span className="text-sm text-stone-700 w-28 md:w-36 truncate shrink-0">{p.name}</span>
-                <div className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full bg-amber-500" style={{ width: `${(p.total / personMax) * 100}%` }} />
-                </div>
-                <span className="text-sm font-medium tabular-nums text-stone-900 w-24 text-right shrink-0">{formatEUR(p.total)}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {/* Répartition par catégorie (rubrique « Société ») */}
-      {!duScope && catBreakdown.length > 0 && (
-        <Card className="p-5">
-          <h3 className="font-serif text-lg text-stone-900 mb-3">Par catégorie</h3>
-          <div className="space-y-2">
-            {catBreakdown.map(c => (
-              <div key={c.id} className="flex items-center gap-3">
-                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
-                <span className="text-sm text-stone-700 w-28 md:w-36 truncate shrink-0">{c.name}</span>
-                <div className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full" style={{ width: `${(c.total / catMax) * 100}%`, backgroundColor: c.color }} />
-                </div>
-                <span className="text-sm font-medium tabular-nums text-stone-900 w-24 text-right shrink-0">{formatEUR(c.total)}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {/* Liste complète, regroupée par mois */}
-      <Card className="p-5">
-        <div className="flex items-center gap-2 flex-wrap mb-4">
-          <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
-            {[
-              { id: 'all', label: 'Tous', count: reimbursables.length },
-              { id: 'pending', label: 'En attente', count: pending.length },
-              { id: 'paid', label: L.filtreRegle, count: completed.length },
-            ].map(f => (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => setStatusFilter(f.id)}
-                className={`no-touch-grow inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition ${
-                  statusFilter === f.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
-                }`}
-              >
-                {f.label}
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                  statusFilter === f.id ? 'bg-stone-100 text-stone-700' : 'bg-white text-stone-500'
-                }`}>{f.count}</span>
-              </button>
-            ))}
-          </div>
-          <div className="relative flex-1" style={{ minWidth: 180 }}>
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher…" className="pl-9" />
-          </div>
-          {listed.length > 0 && (
-            <p className="text-sm text-stone-600 tabular-nums ml-auto">
-              {plural(listed.length)} · <span className="font-medium text-stone-900">{formatEUR(listedTotal)}</span>
+          {listed.length === 0 ? (
+            <p className="t-muted text-center px-4 py-10" style={{ borderTop: '1px solid var(--line-soft)' }}>
+              {reimbursables.length === 0 ? L.vide : 'Aucun résultat pour ce filtre.'}
             </p>
-          )}
-        </div>
-
-        {listed.length === 0 ? (
-          <p className="text-stone-500 text-sm py-4 text-center">
-            {reimbursables.length === 0 ? L.vide : 'Aucun résultat pour ce filtre.'}
-          </p>
-        ) : (
-          <div className="space-y-5">
-            {monthGroups.map(g => (
+          ) : (
+            monthGroups.map(g => (
               <div key={g.key}>
-                <div className="flex items-baseline justify-between gap-3 px-1 mb-1.5 flex-wrap">
-                  <p className="text-xs uppercase tracking-wider text-stone-500">{g.label} · {plural(g.txs.length)}</p>
-                  <p className="text-sm tabular-nums">
-                    <span className="font-medium text-stone-900">{formatEUR(g.total)}</span>
-                    {g.pending > 0 && <span className="text-amber-700 ml-2">dont {formatEUR(g.pending)} en attente</span>}
-                  </p>
+                <div className="f-group-h">
+                  <span><span className="font-semibold t-ink first-letter:uppercase">{libelleMois(g.key)}</span><span className="t-muted"> · {plural(g.txs.length)}</span></span>
+                  <span className="f-num">
+                    <span className="font-medium t-ink">{formatEUR(g.total)}</span>
+                    {g.pending > 0 && <span className="t-warn"> · dont {formatEUR(g.pending)} en attente</span>}
+                  </span>
                 </div>
-                <div className="space-y-1.5">
-                  {g.txs.map(t => (
-                    <div key={t.id} className="group flex items-center gap-2 md:gap-3 p-3 bg-stone-50 rounded-xl hover:bg-stone-100 transition">
-                      <button
-                        onClick={() => toggleRembourse(t)}
-                        className={`shrink-0 transition ${regle(t) ? 'text-emerald-700' : 'text-stone-400 hover:text-emerald-700'}`}
-                        title={regle(t) ? (isPart(t) ? 'Marquer comme non versée' : 'Annuler le remboursement') : (isPart(t) ? 'Marquer comme versée' : 'Marquer comme remboursé')}
-                      >
-                        {regle(t) ? <CheckCircle2 size={20} /> : <Circle size={20} />}
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p className={`font-medium truncate ${regle(t) ? 'text-stone-500' : 'text-stone-900'}`}>{t.libelle}</p>
-                          {t.justificatif && (
-                            <button
-                              onClick={() => setViewingJustif(t.justificatif)}
-                              className="no-touch-grow text-stone-500 hover:text-stone-900 transition shrink-0"
-                              title="Voir la facture jointe"
-                            >
-                              <Paperclip size={12} />
-                            </button>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-stone-500 mt-0.5 flex-wrap">
-                          <span>{formatDateFR(t.date)}</span>
-                          {isPart(t) && <span className="font-medium text-stone-700">Participation</span>}
-                          {duScope && debiteurDe(t) && <span className="font-medium text-stone-700">{debiteurDe(t)}</span>}
-                          {!regle(t) && recuPart(t) > 0 && (
-                            <span className="text-amber-700">reçu {formatEUR(recuPart(t))} · reste {formatEUR(reste(t))}</span>
-                          )}
-                          {duScope && t.type !== 'revenu' && amt(t) < Math.abs(t.montant) && (
-                            <span>sur {formatEUR(Math.abs(t.montant))}</span>
-                          )}
-                          {getCatIds(t).slice(0, 2).map(id => {
-                            const cat = categories.find(c => c.id === id);
-                            if (!cat) return null;
-                            return (
-                              <span key={id} className="inline-flex items-center gap-1">
-                                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
-                                <span>{cat.name}</span>
-                              </span>
-                            );
-                          })}
-                          {getCatIds(t).length > 2 && <span className="text-stone-400">+{getCatIds(t).length - 2}</span>}
-                          {t.notes && <span className="truncate text-stone-400">· {t.notes}</span>}
-                        </div>
+                {g.txs.map((t, i) => (
+                  <div key={t.id} className={`f-row f-entry ${i > 0 ? 'f-line' : ''}`}>
+                    <IconButton
+                      label={regle(t) ? (isPart(t) ? 'Marquer comme non versée' : 'Annuler le remboursement') : (isPart(t) ? 'Marquer comme versée' : 'Marquer comme remboursé')}
+                      onClick={() => toggleRembourse(t)}
+                      className="f-toggle-st"
+                      style={{ color: regle(t) ? 'var(--pos)' : 'var(--muted)' }}
+                    >
+                      {regle(t) ? <CheckCircle2 size={19} /> : <Circle size={19} />}
+                    </IconButton>
+                    <div className="min-w-0 flex flex-col gap-0.5">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className={`truncate font-medium ${regle(t) ? 't-muted' : 't-ink'}`}>{t.libelle}</span>
+                        {t.justificatif && <JustifButton onClick={() => setViewingJustif(t.justificatif)} />}
                       </div>
-                      <span className={`hidden sm:inline-flex text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded shrink-0 ${
-                        regle(t) ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                      }`}>
-                        {regle(t) ? (isPart(t) ? 'Versée' : 'Remboursé') : (recuPart(t) > 0 ? 'Partiel' : 'En attente')}
-                      </span>
-                      <p className={`font-serif text-base md:text-lg tabular-nums shrink-0 text-right ${regle(t) ? 'text-stone-500' : 'text-stone-900'}`}>
-                        {formatEUR(amt(t))}
-                      </p>
-                      <div className="flex opacity-100 md:opacity-0 md:group-hover:opacity-100 transition shrink-0">
-                        <button
-                          onClick={() => onEdit && onEdit(t)}
-                          className="p-1.5 rounded-lg text-stone-600 hover:bg-white hover:text-stone-900 transition"
-                          title="Modifier"
-                        >
-                          <Edit2 size={14} />
-                        </button>
-                        <button
-                          onClick={() => onDelete && onDelete(t.id)}
-                          className="p-1.5 rounded-lg text-rose-600 hover:bg-white transition"
-                          title="Supprimer"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs t-muted min-w-0">
+                        <span className="f-num">{formatDateFR(t.date)}</span>
+                        {isPart(t) && <span className="font-medium t-ink2">Participation</span>}
+                        {duScope && debiteurDe(t) && <span className="font-medium t-ink2">{debiteurDe(t)}</span>}
+                        {!regle(t) && recuPart(t) > 0 && (
+                          <span className="f-num t-warn">reçu {formatEUR(recuPart(t))} · reste {formatEUR(reste(t))}</span>
+                        )}
+                        {duScope && t.type !== 'revenu' && amt(t) < Math.abs(t.montant) && (
+                          <span className="f-num">sur {formatEUR(Math.abs(t.montant))}</span>
+                        )}
+                        {getCatIds(t).slice(0, 2).map(id => {
+                          const cat = categories.find(c => c.id === id);
+                          if (!cat) return null;
+                          return (
+                            <span key={id} className="inline-flex items-center gap-1.5">
+                              <span className="f-sq" style={{ width: 7, height: 7, backgroundColor: cat.color }} />
+                              {cat.name}
+                            </span>
+                          );
+                        })}
+                        {getCatIds(t).length > 2 && <span className="t-faint">+{getCatIds(t).length - 2}</span>}
+                        {t.notes && <span className="truncate t-faint max-w-full">{t.notes}</span>}
                       </div>
                     </div>
-                  ))}
-                </div>
+                    <span className={`hidden sm:inline-flex f-badge ${regle(t) ? 'f-b-ok' : 'f-b-wait'}`}>
+                      {regle(t) ? (isPart(t) ? 'Versée' : 'Remboursé') : (recuPart(t) > 0 ? 'Partiel' : 'En attente')}
+                    </span>
+                    <span className={`f-num text-right font-medium ${regle(t) ? 't-muted' : 't-ink'}`}>
+                      {formatEUR(amt(t))}
+                    </span>
+                    <RowActions onEdit={() => onEdit && onEdit(t)} onDelete={() => onDelete && onDelete(t.id)} />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            ))
+          )}
+        </Card>
+
+        {/* Répartition : par débiteur (Créances) ou par catégorie (Société) */}
+        {sideItems.length > 0 && (
+          <Card className="min-w-0" style={{ flex: '1 1 300px' }}>
+            <PanelHead title={duScope ? 'En attente par débiteur' : 'Par catégorie'} />
+            <div className="flex flex-col gap-3 px-4 pt-3.5 pb-4">
+              {(duScope ? personBreakdown : catBreakdown).map(item => {
+                const total = item.total;
+                const max = duScope ? personMax : catMax;
+                const color = duScope ? 'var(--m-wait)' : item.color;
+                return (
+                  <div key={duScope ? item.name : item.id} className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-2 min-w-0">
+                        {duScope
+                          ? <UserIcon size={13} className="t-muted shrink-0" />
+                          : <span className="f-sq" style={{ backgroundColor: color }} />}
+                        <span className="truncate t-ink">{item.name}</span>
+                      </span>
+                      <span className="f-num font-medium t-ink">{formatEUR(total)}</span>
+                    </div>
+                    <span className="f-track"><span style={{ width: `${(total / max) * 100}%`, background: color }} /></span>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
         )}
-      </Card>
+      </div>
 
       <Modal
         open={invoiceOpen}
         onClose={() => setInvoiceOpen(false)}
-        title="Générer un document de remboursement"
+        title={L.doc}
         size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setInvoiceOpen(false)}>Annuler</Button>
+            <Button onClick={generateInvoice} disabled={selectedTxs.length === 0}>
+              <FileText size={15} /> Générer le document
+            </Button>
+          </>
+        }
       >
-        <div className="space-y-5">
-          <p className="text-sm text-stone-600">
-            Choisis les dépenses remboursables à inclure (en attente, déjà remboursées, ou les deux).
-            Le document s'adapte automatiquement : <strong>note de frais</strong> pour les en attente,
-            <strong> récapitulatif d'archivage</strong> pour les déjà remboursées.
-          </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">N° du document</label>
-              <Input value={invoice.numero} onChange={(e) => setInvoice({ ...invoice, numero: e.target.value })} />
-            </div>
-            <div>
-              <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Objet</label>
+        <div className="flex flex-col gap-5">
+          <div className="f-doc-head">
+            <Field label="N° du document">
+              <Input value={invoice.numero} onChange={(e) => setInvoice({ ...invoice, numero: e.target.value })} className="f-num" />
+            </Field>
+            <Field label="Objet">
               <Input value={invoice.objet} onChange={(e) => setInvoice({ ...invoice, objet: e.target.value })} />
-            </div>
+            </Field>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <p className="text-xs uppercase tracking-wider text-stone-500">Émetteur (vous)</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <fieldset className="flex flex-col gap-2 min-w-0">
+              <legend className="f-label mb-2">Émetteur</legend>
               <Input
                 value={invoice.emetteurNom}
                 onChange={(e) => setInvoice({ ...invoice, emetteurNom: e.target.value })}
                 placeholder="Nom complet"
+                aria-label="Nom de l'émetteur"
               />
               <textarea
                 value={invoice.emetteurAdresse}
                 onChange={(e) => setInvoice({ ...invoice, emetteurAdresse: e.target.value })}
                 placeholder="Adresse postale"
+                aria-label="Adresse de l'émetteur"
                 rows={2}
-                className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-stone-900/10 focus:border-stone-400 resize-none"
+                className="f-field resize-none"
               />
               <Input
                 value={invoice.emetteurEmail}
                 onChange={(e) => setInvoice({ ...invoice, emetteurEmail: e.target.value })}
-                placeholder="email@exemple.fr"
+                placeholder="E-mail"
+                aria-label="E-mail de l'émetteur"
                 type="email"
               />
-            </div>
-            <div className="space-y-2">
-              <p className="text-xs uppercase tracking-wider text-stone-500">Destinataire</p>
+            </fieldset>
+            <fieldset className="flex flex-col gap-2 min-w-0">
+              <legend className="f-label mb-2">Destinataire</legend>
               <Input
                 value={invoice.destinataireNom}
                 onChange={(e) => setInvoice({ ...invoice, destinataireNom: e.target.value })}
                 placeholder="Entreprise ou personne"
+                aria-label="Nom du destinataire"
               />
               <textarea
                 value={invoice.destinataireAdresse}
                 onChange={(e) => setInvoice({ ...invoice, destinataireAdresse: e.target.value })}
                 placeholder="Adresse postale"
+                aria-label="Adresse du destinataire"
                 rows={2}
-                className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-stone-900/10 focus:border-stone-400 resize-none"
+                className="f-field resize-none"
               />
-            </div>
+            </fieldset>
           </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-              <p className="text-xs uppercase tracking-wider text-stone-500">Dépenses à inclure</p>
-              <div className="flex gap-1">
+          <div className="flex flex-col gap-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="f-label">Dépenses à inclure</span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Seg
+                  label="Filtre"
+                  value={invoiceFilter}
+                  onChange={setInvoiceFilter}
+                  options={[
+                    { id: 'pending', label: 'En attente', count: docPending.length },
+                    { id: 'paid', label: 'Remboursées', count: docCompleted.length },
+                    { id: 'all', label: 'Toutes', count: docItems.length },
+                  ]}
+                />
                 <Button size="sm" variant="ghost" onClick={() => setInvoice({ ...invoice, selectedIds: displayedReimb.map(t => t.id) })}>
                   Tout cocher
                 </Button>
@@ -3434,96 +3307,51 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], partic
               </div>
             </div>
 
-            {/* Filtre : en attente / remboursées / toutes */}
-            <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl mb-2 w-fit">
-              {[
-                { id: 'pending', label: 'En attente', count: docPending.length },
-                { id: 'paid', label: 'Remboursées', count: docCompleted.length },
-                { id: 'all', label: 'Toutes', count: docItems.length },
-              ].map(f => (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={() => setInvoiceFilter(f.id)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                    invoiceFilter === f.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
-                  }`}
-                >
-                  {f.label}
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                    invoiceFilter === f.id ? 'bg-stone-100 text-stone-700' : 'bg-white text-stone-500'
-                  }`}>{f.count}</span>
-                </button>
-              ))}
-            </div>
-
-            <div className="max-h-64 overflow-y-auto border border-stone-200 rounded-xl divide-y divide-stone-100">
+            <div className="max-h-64 overflow-y-auto rounded-lg" style={{ border: '1px solid var(--line)' }}>
               {displayedReimb.length === 0 ? (
-                <p className="text-stone-500 text-sm p-4 text-center">
+                <p className="t-muted p-5 text-center">
                   {invoiceFilter === 'pending' && 'Aucune dépense en attente.'}
                   {invoiceFilter === 'paid' && 'Aucune dépense déjà remboursée.'}
                   {invoiceFilter === 'all' && 'Aucune dépense remboursable.'}
                 </p>
-              ) : displayedReimb.map(t => {
+              ) : displayedReimb.map((t, i) => {
                 const checked = invoice.selectedIds.includes(t.id);
                 return (
-                  <label key={t.id} className="flex items-center gap-3 p-3 hover:bg-stone-50 cursor-pointer">
+                  <label key={t.id} className={`f-row f-pickrow ${i > 0 ? 'f-line' : ''}`}>
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={() => toggleInvoiceTx(t.id)}
-                      className="w-4 h-4 rounded border-stone-300"
+                      className="f-check"
                     />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-sm font-medium text-stone-900 truncate">{t.libelle}</p>
-                        {regle(t) ? (
-                          <span className="inline-flex items-center gap-0.5 text-[9px] uppercase tracking-wider font-medium px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 shrink-0">
-                            <CheckCircle2 size={8} /> Reçu
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-0.5 text-[9px] uppercase tracking-wider font-medium px-1 py-0.5 rounded bg-amber-100 text-amber-700 shrink-0">
-                            <Clock size={8} /> Attente
-                          </span>
-                        )}
-                        {t.justificatif && (
-                          <Paperclip size={10} className="text-stone-400 shrink-0" />
-                        )}
-                      </div>
-                      <p className="text-xs text-stone-500">{formatDateFR(t.date)}</p>
-                    </div>
-                    <p className="font-serif text-base text-stone-900 tabular-nums">{formatEUR(docAmt(t))}</p>
+                    <span className="min-w-0 flex flex-col gap-0.5">
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="truncate font-medium t-ink">{t.libelle}</span>
+                        <span className={`f-badge ${regle(t) ? 'f-b-ok' : 'f-b-wait'}`}>{regle(t) ? 'Remboursée' : 'En attente'}</span>
+                        {t.justificatif && <Paperclip size={12} className="t-muted shrink-0" aria-label="Facture jointe" />}
+                      </span>
+                      <span className="text-xs t-muted f-num">{formatDateFR(t.date)}</span>
+                    </span>
+                    <span className="f-num font-medium t-ink">{formatEUR(docAmt(t))}</span>
                   </label>
                 );
               })}
             </div>
           </div>
 
-          <div className="flex items-center justify-between p-4 bg-stone-900 text-stone-50 rounded-xl">
-            <div>
-              <p className="text-xs uppercase tracking-wider text-stone-400">Total facturé</p>
-              <p className="font-serif text-2xl mt-0.5">{formatEUR(invoiceTotal)}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-sm text-stone-400">
-                {selectedTxs.length} dépense{selectedTxs.length > 1 ? 's' : ''}
-              </p>
-              {(() => {
-                const withJustif = selectedTxs.filter(t => t.justificatif && t.justificatif.mimeType?.startsWith('image/')).length;
-                return withJustif > 0 ? (
-                  <p className="text-xs text-stone-500 mt-0.5 inline-flex items-center gap-1">
-                    <Paperclip size={11} /> {withJustif} facture{withJustif > 1 ? 's' : ''} en annexe
-                  </p>
-                ) : null;
-              })()}
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setInvoiceOpen(false)} className="flex-1">Annuler</Button>
-            <Button onClick={generateInvoice} disabled={selectedTxs.length === 0} className="flex-1">
-              <FileText size={14} /> Générer le document
-            </Button>
+          <div className="flex items-center justify-between gap-3 px-4 py-3.5 rounded-lg" style={{ border: '1px solid var(--line)', background: 'var(--surface-2)' }}>
+            <span className="flex flex-col gap-0.5">
+              <span className="t-ink3">
+                {selectedHasPaid && !selectedHasPending ? 'Total remboursé' : selectedHasPending && selectedHasPaid ? 'Total à rembourser et déjà remboursé' : 'Total à rembourser'}
+              </span>
+              <span className="flex flex-wrap items-center gap-x-2.5 text-xs t-muted f-num">
+                <span>{selectedTxs.length} dépense{selectedTxs.length > 1 ? 's' : ''}</span>
+                {withAnnexe > 0 && (
+                  <span className="inline-flex items-center gap-1"><Paperclip size={11} /> {withAnnexe} facture{withAnnexe > 1 ? 's' : ''} en annexe</span>
+                )}
+              </span>
+            </span>
+            <span className="f-num text-[22px] font-semibold tracking-tight t-ink">{formatEUR(invoiceTotal)}</span>
           </div>
         </div>
       </Modal>
@@ -3552,10 +3380,10 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], partic
 const SANS_PROJET = 'Sans projet';
 
 // Petit indicateur (libellé + valeur) de l'en-tête d'un projet
-const AffStat = ({ label, tone = 'text-stone-900', labelTone = 'text-stone-500', children }) => (
-  <div>
-    <p className={`text-[10px] uppercase tracking-wider ${labelTone}`}>{label}</p>
-    <div className={`font-serif text-base tabular-nums ${tone}`}>{children}</div>
+const AffStat = ({ label, tone = 't-ink', children }) => (
+  <div className="flex flex-col gap-0.5">
+    <span className="text-xs t-muted">{label}</span>
+    <div className={`f-num text-sm font-semibold ${tone}`}>{children}</div>
   </div>
 );
 
@@ -3686,330 +3514,276 @@ const AffairesView = ({ transactions, categories, affaireCatIds = [], projetsMet
   };
 
   return (
-    <div className="space-y-4">
-      {/* En-tête de la rubrique */}
-      <Card className="p-5">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-stone-900 flex items-center justify-center shrink-0">
-              <Briefcase className="text-stone-50" size={18} />
-            </div>
-            <h2 className="font-serif text-xl text-stone-900 whitespace-nowrap">Affaires</h2>
-          </div>
-          <div className="flex gap-2 shrink-0 ml-auto">
-            <Button size="sm" onClick={() => onAdd && onAdd(activeProjet === 'all' || activeProjet === SANS_PROJET ? '' : activeProjet)}>
-              <Plus size={14} /> Ajouter
-            </Button>
-          </div>
-        </div>
-        {projetsNoms.length > 1 && (
-          <div className="flex flex-wrap gap-1.5 mt-4">
-            <button type="button" onClick={() => setProjetFilter('all')} className={chipClass(activeProjet === 'all')}>
-              Tous les projets
+    <div className="flex flex-col gap-4">
+      <PageHeader title="Affaires">
+        <Button onClick={() => onAdd && onAdd(activeProjet === 'all' || activeProjet === SANS_PROJET ? '' : activeProjet)}>
+          <Plus size={15} /> Ajouter
+        </Button>
+      </PageHeader>
+
+      {projetsNoms.length > 1 && (
+        <div className="f-tabs" role="tablist" aria-label="Projets">
+          <button type="button" role="tab" aria-selected={activeProjet === 'all'} onClick={() => setProjetFilter('all')} className={`f-tab no-touch-grow ${activeProjet === 'all' ? 'on' : ''}`}>
+            Tous les projets
+          </button>
+          {projetsNoms.map(nom => (
+            <button key={nom} type="button" role="tab" aria-selected={activeProjet === nom} onClick={() => setProjetFilter(nom)} className={`f-tab no-touch-grow ${activeProjet === nom ? 'on' : ''}`}>
+              {nom}
             </button>
-            {projetsNoms.map(nom => (
-              <button key={nom} type="button" onClick={() => setProjetFilter(nom)} className={chipClass(activeProjet === nom)}>
-                {nom}
-              </button>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      {/* Indicateurs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <Card className="p-5">
-          <p className="text-xs uppercase tracking-wider text-stone-500">Achats</p>
-          <p className="font-serif text-2xl md:text-3xl text-stone-900 tabular-nums mt-1">{formatEUR(totalAchats)}</p>
-        </Card>
-        <Card className="p-5">
-          <p className="text-xs uppercase tracking-wider text-emerald-700">Ventes</p>
-          <p className="font-serif text-2xl md:text-3xl text-emerald-700 tabular-nums mt-1">{formatEUR(totalVentes)}</p>
-          {totalCaRecherche > 0 && (
-            <p className="text-sm text-stone-600 mt-1 tabular-nums">CA recherché {formatEUR(totalCaRecherche)}</p>
-          )}
-        </Card>
-        <Card className="p-5">
-          <p className="text-xs uppercase tracking-wider text-stone-500">Marge</p>
-          <p className={`font-serif text-2xl md:text-3xl tabular-nums mt-1 ${marge >= 0 ? 'text-stone-900' : 'text-rose-700'}`}>{signed(marge)}</p>
-          {totalEsperee > 0 && (
-            <p className="text-sm text-stone-600 mt-1 tabular-nums">espérée {signed(totalEsperee)}</p>
-          )}
-        </Card>
-        <Card className="p-5 bg-amber-50/40 border-amber-100">
-          <p className="text-xs uppercase tracking-wider text-amber-800">À encaisser</p>
-          <p className="font-serif text-2xl md:text-3xl text-stone-900 tabular-nums mt-1">{formatEUR(totalAttente)}</p>
-          <p className="text-sm text-stone-600 mt-1">{nbAttente} vente{nbAttente > 1 ? 's' : ''}</p>
-        </Card>
-      </div>
-
-      {/* Acheteurs */}
-      {acheteurs.length > 0 && (
-        <Card className="p-5">
-          <h3 className="font-serif text-lg text-stone-900 mb-3">Acheteurs</h3>
-          <div className="space-y-1">
-            {acheteurs.map(a => {
-              const selectable = a.nom !== 'Non précisé';
-              const active = activeAcheteur === a.nom;
-              return (
-                <button
-                  key={a.nom}
-                  type="button"
-                  disabled={!selectable}
-                  onClick={() => setAcheteurFilter(active ? 'all' : a.nom)}
-                  aria-pressed={active}
-                  className={`w-full flex items-center gap-3 px-2 py-1.5 rounded-lg text-left transition ${active ? 'bg-stone-100' : 'hover:bg-stone-50'}`}
-                >
-                  <UserIcon size={14} className="text-stone-500 shrink-0" />
-                  <span className="text-sm text-stone-700 w-24 md:w-36 truncate shrink-0">{a.nom}</span>
-                  <span className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden flex">
-                    <span className="h-full bg-emerald-600" style={{ width: `${((a.total - a.attente) / acheteurMax) * 100}%` }} />
-                    <span className="h-full bg-amber-500" style={{ width: `${(a.attente / acheteurMax) * 100}%` }} />
-                  </span>
-                  <span className="text-sm tabular-nums text-right shrink-0">
-                    <span className="font-medium text-stone-900">{formatEUR(a.total)}</span>
-                    {a.attente > 0 && <span className="block text-xs text-amber-700">{formatEUR(a.attente)} en attente</span>}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </Card>
-      )}
-
-      {/* Filtres de la liste */}
-      {all.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
-            {[
-              { id: 'all', label: 'Tout' },
-              { id: 'paid', label: 'Encaissé' },
-              { id: 'pending', label: 'En attente' },
-            ].map(f => (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => setStatusFilter(f.id)}
-                className={`no-touch-grow px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition ${
-                  statusFilter === f.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-          <div className="relative flex-1" style={{ minWidth: 180 }}>
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher…" className="pl-9" />
-          </div>
+          ))}
         </div>
       )}
 
-      {/* Projets */}
-      {all.length === 0 ? (
-        <Card className="p-5">
-          <p className="text-stone-500 text-sm py-4 text-center">Aucune affaire enregistrée pour le moment.</p>
-        </Card>
-      ) : projets.length === 0 ? (
-        <Card className="p-5">
-          <p className="text-stone-500 text-sm py-4 text-center">Aucun résultat pour ce filtre.</p>
-        </Card>
-      ) : projets.map(p => {
-        const margeProjet = p.ventes - p.achats;
-        const editing = tauxEdit && tauxEdit.nom === p.nom;
-        const startEdit = () => setTauxEdit({ nom: p.nom, valeur: p.taux > 0 ? String(Math.round(p.taux * 100) / 100).replace('.', ',') : '' });
-        return (
-          <Card key={p.nom} className="p-5">
-            <div className="flex items-start justify-between gap-x-6 gap-y-3 flex-wrap mb-4">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="font-serif text-lg text-stone-900">{p.nom}</h3>
-                  {p.attente > 0 && (
-                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
-                      <Clock size={9} /> {formatMontantCourt(p.attente)} à encaisser
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-stone-500 mt-0.5">
-                  {p.nbAchats} achat{p.nbAchats > 1 ? 's' : ''} · {p.nbVentes} vente{p.nbVentes > 1 ? 's' : ''}
-                </p>
-              </div>
-              <div className="flex items-start gap-x-5 gap-y-2 flex-wrap justify-end text-right ml-auto">
-                <AffStat label="Achats">{formatEUR(p.achats)}</AffStat>
-                <AffStat label="Ventes" tone="text-emerald-700" labelTone="text-emerald-700">{formatEUR(p.ventes)}</AffStat>
-                {p.caRecherche > 0 && <AffStat label="CA recherché">{formatEUR(p.caRecherche)}</AffStat>}
-                <AffStat label="Marge" tone={margeProjet >= 0 ? 'text-stone-900' : 'text-rose-700'}>{signed(margeProjet)}</AffStat>
-                {p.nom !== SANS_PROJET && (
-                  <AffStat label="Marge espérée">
-                    {p.taux > 0 ? (
-                      <button
-                        type="button"
-                        onClick={startEdit}
-                        title="Modifier le taux de marge"
-                        className="no-touch-grow inline-flex items-center gap-1.5 hover:text-stone-600 transition"
-                      >
-                        {signed(p.esperee)}
-                        <span className="font-sans text-xs text-stone-500">{formatTaux(p.taux)}</span>
-                        <Pencil size={11} className="text-stone-400" />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={startEdit}
-                        className="no-touch-grow inline-flex items-center gap-1 font-sans text-sm text-stone-500 hover:text-stone-900 transition"
-                      >
-                        <Plus size={12} /> Taux
-                      </button>
-                    )}
-                  </AffStat>
-                )}
-              </div>
+      <Strip min={200}>
+        <Kpi label="Achats" value={formatEUR(totalAchats)} />
+        <Kpi
+          label="Ventes"
+          value={formatEUR(totalVentes)}
+          valueClass="t-pos"
+          sub={totalCaRecherche > 0 ? `CA recherché ${formatEUR(totalCaRecherche)}` : undefined}
+        />
+        <Kpi
+          label="Marge"
+          value={signed(marge)}
+          valueClass={marge >= 0 ? 't-ink' : 't-neg'}
+          sub={totalEsperee > 0 ? `Espérée ${signed(totalEsperee)}` : undefined}
+        />
+        <Kpi
+          label="À encaisser"
+          marker="var(--m-wait-2)"
+          value={formatEUR(totalAttente)}
+          sub={`${nbAttente} vente${nbAttente > 1 ? 's' : ''}`}
+        />
+      </Strip>
+
+      <div className="flex flex-wrap gap-4 items-start">
+        <div className="flex flex-col gap-4 min-w-0" style={{ flex: '999 1 560px' }}>
+          {all.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Seg
+                label="Encaissement"
+                value={statusFilter}
+                onChange={setStatusFilter}
+                options={[
+                  { id: 'all', label: 'Tout' },
+                  { id: 'paid', label: 'Encaissé' },
+                  { id: 'pending', label: 'En attente' },
+                ]}
+              />
+              <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: '1 1 200px' }} />
+              {activeAcheteur !== 'all' && (
+                <Button variant="secondary" onClick={() => setAcheteurFilter('all')}>
+                  <X size={13} /> {activeAcheteur}
+                </Button>
+              )}
             </div>
+          )}
 
-            {/* Saisie du taux de marge visé */}
-            {editing && (
-              <div className="flex items-center gap-2 flex-wrap mb-4 justify-end">
-                <span className="text-xs uppercase tracking-wider text-stone-500">Taux de marge (%)</span>
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  value={tauxEdit.valeur}
-                  onChange={(e) => setTauxEdit({ nom: p.nom, valeur: e.target.value })}
-                  onKeyDown={(e) => { if (e.key === 'Enter') saveTaux(); if (e.key === 'Escape') setTauxEdit(null); }}
-                  placeholder="30"
-                  autoFocus
-                  style={{ width: 96 }}
-                />
-                <Button size="sm" onClick={saveTaux}><Check size={14} /> OK</Button>
-                <Button size="sm" variant="ghost" onClick={() => setTauxEdit(null)}>Annuler</Button>
-              </div>
-            )}
-
-            {/* Progression vers le CA recherché et unités vendues / possédées */}
-            {(p.caRecherche > 0 || p.possedees > 0 || p.vendues > 0) && (
-              <div className="mb-4 space-y-2">
-                {p.caRecherche > 0 && (
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${p.caAtteint ? 'bg-emerald-600' : 'bg-stone-900'}`}
-                        style={{ width: `${Math.max(0, Math.min(100, (p.ventes / p.caRecherche) * 100))}%` }}
-                      />
+          {all.length === 0 ? (
+            <Card><p className="t-muted text-center px-4 py-10">Aucune affaire enregistrée pour le moment.</p></Card>
+          ) : projets.length === 0 ? (
+            <Card><p className="t-muted text-center px-4 py-10">Aucun résultat pour ce filtre.</p></Card>
+          ) : projets.map(p => {
+            const margeProjet = p.ventes - p.achats;
+            const editing = tauxEdit && tauxEdit.nom === p.nom;
+            const startEdit = () => setTauxEdit({ nom: p.nom, valeur: p.taux > 0 ? String(Math.round(p.taux * 100) / 100).replace('.', ',') : '' });
+            return (
+              <Card key={p.nom} className="overflow-hidden">
+                <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 p-4">
+                  <div className="min-w-0 flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="text-[15px] font-semibold t-ink">{p.nom}</h2>
+                      {p.attente > 0 && <PendingBadge label={`${formatMontantCourt(p.attente)} à encaisser`} />}
                     </div>
-                    <span className="text-xs text-stone-600 tabular-nums shrink-0">
-                      {Math.round((p.ventes / p.caRecherche) * 100)} % du CA recherché
+                    <span className="t-muted">
+                      {p.nbAchats} achat{p.nbAchats > 1 ? 's' : ''} · {p.nbVentes} vente{p.nbVentes > 1 ? 's' : ''}
                     </span>
                   </div>
-                )}
-                {(p.possedees > 0 || p.vendues > 0) && (
-                  <p className="text-sm text-stone-600 tabular-nums">
-                    {p.possedees > 0 ? (
-                      <>
-                        <span className="font-medium text-stone-900">
-                          {formatMontantCourt(p.vendues, false)} / {formatMontantCourt(p.possedees, false)}
-                        </span>{' '}
-                        unité{p.possedees > 1 ? 's' : ''} vendue{p.possedees > 1 ? 's' : ''}
-                        {p.restantes > 0 && <> · {formatMontantCourt(p.restantes, false)} restante{p.restantes > 1 ? 's' : ''}</>}
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-medium text-stone-900">{formatMontantCourt(p.vendues, false)}</span>{' '}
-                        unité{p.vendues > 1 ? 's' : ''} vendue{p.vendues > 1 ? 's' : ''}
-                      </>
-                    )}
-                    {p.prixCible > 0 && (
-                      <> · à vendre <span className="font-medium text-stone-900">{formatEUR(p.prixCible)}</span> l'unité pour le CA recherché</>
-                    )}
-                    {p.caAtteint && <> · <span className="text-emerald-700 font-medium">CA recherché atteint</span></>}
-                  </p>
-                )}
-              </div>
-            )}
-
-            <div className="space-y-1.5">
-              {p.lignes.map(t => {
-                const vente = isVente(t);
-                const ok = encaisse(t);
-                const gratuit = vente && abs(t) === 0;
-                const partiel = vente && !ok && dejaRecu(t) > 0;
-                const reduction = Number(t.reduction) > 0 ? Number(t.reduction) : 0;
-                return (
-                  <div key={t.id} className="group flex items-center gap-2 md:gap-3 p-3 bg-stone-50 rounded-xl hover:bg-stone-100 transition">
-                    {vente && !gratuit ? (
-                      <button
-                        onClick={() => toggleEncaisse(t)}
-                        className={`shrink-0 transition ${ok ? 'text-emerald-700' : 'text-stone-400 hover:text-emerald-700'}`}
-                        title={ok ? 'Marquer comme non encaissé' : 'Marquer comme encaissé'}
-                      >
-                        {ok ? <CheckCircle2 size={20} /> : <Circle size={20} />}
-                      </button>
-                    ) : (
-                      <span className="shrink-0 w-5 flex justify-center text-stone-400">
-                        {vente ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
-                      </span>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="font-medium text-stone-900 truncate">{t.libelle}</p>
-                        {t.justificatif && (
+                  <div className="flex flex-wrap items-start gap-x-7 gap-y-2 sm:justify-end sm:text-right">
+                    <AffStat label="Achats">{formatEUR(p.achats)}</AffStat>
+                    <AffStat label="Ventes" tone="t-pos">{formatEUR(p.ventes)}</AffStat>
+                    {p.caRecherche > 0 && <AffStat label="CA recherché">{formatEUR(p.caRecherche)}</AffStat>}
+                    <AffStat label="Marge" tone={margeProjet >= 0 ? 't-ink' : 't-neg'}>{signed(margeProjet)}</AffStat>
+                    {p.nom !== SANS_PROJET && (
+                      <AffStat label="Marge espérée">
+                        {p.taux > 0 ? (
                           <button
-                            onClick={() => setViewingJustif(t.justificatif)}
-                            className="no-touch-grow text-stone-500 hover:text-stone-900 transition shrink-0"
-                            title="Voir la facture jointe"
+                            type="button"
+                            onClick={startEdit}
+                            title="Modifier le taux de marge"
+                            className="no-touch-grow inline-flex items-center gap-1.5 hover:opacity-70"
                           >
-                            <Paperclip size={12} />
+                            {signed(p.esperee)}
+                            <span className="text-xs font-normal t-muted">{formatTaux(p.taux)}</span>
+                            <Pencil size={11} className="t-muted" />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={startEdit}
+                            className="no-touch-grow inline-flex items-center gap-1 font-medium t-ink3 hover:opacity-70"
+                          >
+                            <Plus size={12} /> Taux
                           </button>
                         )}
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-stone-500 mt-0.5 flex-wrap">
-                        <span>{formatDateFR(t.date)}</span>
-                        <span>{vente ? 'Vente' : 'Achat'}</span>
-                        {qte(t) > 0 && <span className="font-medium text-stone-700">× {formatMontantCourt(qte(t), false)}</span>}
-                        {vente && nomAcheteur(t) && <span className="font-medium text-stone-700">{nomAcheteur(t)}</span>}
-                        {vente && reduction > 0 && <span>réduction {formatEUR(reduction)}</span>}
-                        {partiel && <span className="text-amber-700">reçu {formatEUR(dejaRecu(t))} · reste {formatEUR(reste(t))}</span>}
-                        {t.notes && <span className="truncate text-stone-400">· {t.notes}</span>}
-                      </div>
-                    </div>
-                    {vente && !gratuit && (
-                      <span className={`hidden sm:inline-flex text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded shrink-0 ${
-                        ok ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                      }`}>
-                        {ok ? 'Encaissé' : (partiel ? 'Partiel' : 'En attente')}
-                      </span>
+                      </AffStat>
                     )}
-                    <p className={`font-serif text-base md:text-lg tabular-nums shrink-0 text-right ${vente ? 'text-emerald-700' : 'text-stone-900'}`}>
-                      {vente ? '+' : '−'}{formatEUR(abs(t))}
-                    </p>
-                    <div className="flex opacity-100 md:opacity-0 md:group-hover:opacity-100 transition shrink-0">
-                      <button
-                        onClick={() => onEdit && onEdit(t)}
-                        className="p-1.5 rounded-lg text-stone-600 hover:bg-white hover:text-stone-900 transition"
-                        title="Modifier"
-                      >
-                        <Edit2 size={14} />
-                      </button>
-                      <button
-                        onClick={() => onDelete && onDelete(t.id)}
-                        className="p-1.5 rounded-lg text-rose-600 hover:bg-white transition"
-                        title="Supprimer"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
                   </div>
+                </div>
+
+                {/* Saisie du taux de marge visé */}
+                {editing && (
+                  <div className="flex items-center gap-2 flex-wrap justify-end px-4 pb-4">
+                    <span className="f-label">Taux de marge (%)</span>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      value={tauxEdit.valeur}
+                      onChange={(e) => setTauxEdit({ nom: p.nom, valeur: e.target.value })}
+                      onKeyDown={(e) => { if (e.key === 'Enter') saveTaux(); if (e.key === 'Escape') setTauxEdit(null); }}
+                      placeholder="30"
+                      autoFocus
+                      className="f-num"
+                      style={{ width: 96 }}
+                    />
+                    <Button size="sm" onClick={saveTaux}><Check size={14} /> OK</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setTauxEdit(null)}>Annuler</Button>
+                  </div>
+                )}
+
+                {/* Progression vers le CA recherché et unités vendues / possédées */}
+                {(p.caRecherche > 0 || p.possedees > 0 || p.vendues > 0) && (
+                  <div className="flex flex-col gap-2 px-4 pb-4">
+                    {p.caRecherche > 0 && (
+                      <div className="flex items-center gap-3">
+                        <span className="flex-1"><ProgressBar value={Math.max(0, p.ventes)} max={p.caRecherche} color={p.caAtteint ? 'var(--m-ok)' : 'var(--ink)'} /></span>
+                        <span className="text-xs t-ink3 f-num shrink-0">
+                          {Math.round((p.ventes / p.caRecherche) * 100)} % du CA recherché
+                        </span>
+                      </div>
+                    )}
+                    {(p.possedees > 0 || p.vendues > 0) && (
+                      <p className="t-ink3 f-num">
+                        {p.possedees > 0 ? (
+                          <>
+                            <span className="font-medium t-ink">
+                              {formatMontantCourt(p.vendues, false)} / {formatMontantCourt(p.possedees, false)}
+                            </span>{' '}
+                            unité{p.possedees > 1 ? 's' : ''} vendue{p.possedees > 1 ? 's' : ''}
+                            {p.restantes > 0 && <> · {formatMontantCourt(p.restantes, false)} restante{p.restantes > 1 ? 's' : ''}</>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-medium t-ink">{formatMontantCourt(p.vendues, false)}</span>{' '}
+                            unité{p.vendues > 1 ? 's' : ''} vendue{p.vendues > 1 ? 's' : ''}
+                          </>
+                        )}
+                        {p.prixCible > 0 && (
+                          <> · à vendre <span className="font-medium t-ink">{formatEUR(p.prixCible)}</span> l’unité pour le CA recherché</>
+                        )}
+                        {p.caAtteint && <> · <span className="font-medium t-pos">CA recherché atteint</span></>}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {p.lignes.map(t => {
+                  const vente = isVente(t);
+                  const ok = encaisse(t);
+                  const gratuit = vente && abs(t) === 0;
+                  const partiel = vente && !ok && dejaRecu(t) > 0;
+                  const reduction = Number(t.reduction) > 0 ? Number(t.reduction) : 0;
+                  return (
+                    <div key={t.id} className="f-row f-entry f-line">
+                      {vente && !gratuit ? (
+                        <IconButton
+                          label={ok ? 'Marquer comme non encaissé' : 'Marquer comme encaissé'}
+                          onClick={() => toggleEncaisse(t)}
+                          className="f-toggle-st"
+                          style={{ color: ok ? 'var(--pos)' : 'var(--muted)' }}
+                        >
+                          {ok ? <CheckCircle2 size={19} /> : <Circle size={19} />}
+                        </IconButton>
+                      ) : (
+                        <span className="w-7 flex justify-center t-muted" title={vente ? 'Vente' : 'Achat'}>
+                          {vente ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
+                        </span>
+                      )}
+                      <div className="min-w-0 flex flex-col gap-0.5">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="truncate font-medium t-ink">{t.libelle}</span>
+                          {t.justificatif && <JustifButton onClick={() => setViewingJustif(t.justificatif)} />}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs t-muted min-w-0">
+                          <span className="f-num">{formatDateFR(t.date)}</span>
+                          <span>{vente ? 'Vente' : 'Achat'}</span>
+                          {qte(t) > 0 && <span className="f-num font-medium t-ink2">× {formatMontantCourt(qte(t), false)}</span>}
+                          {vente && nomAcheteur(t) && <span className="font-medium t-ink2">{nomAcheteur(t)}</span>}
+                          {vente && reduction > 0 && <span className="f-num">réduction {formatEUR(reduction)}</span>}
+                          {partiel && <span className="f-num t-warn">reçu {formatEUR(dejaRecu(t))} · reste {formatEUR(reste(t))}</span>}
+                          {t.notes && <span className="truncate t-faint max-w-full">{t.notes}</span>}
+                        </div>
+                      </div>
+                      {vente && !gratuit ? (
+                        <span className={`hidden sm:inline-flex f-badge ${ok ? 'f-b-ok' : 'f-b-wait'}`}>
+                          {ok ? 'Encaissé' : (partiel ? 'Partiel' : 'En attente')}
+                        </span>
+                      ) : <span className="hidden sm:block" />}
+                      <span className={`f-num text-right font-medium ${vente ? 't-pos' : 't-ink'}`}>
+                        {vente ? '+' : '−'}{formatEUR(abs(t))}
+                      </span>
+                      <RowActions onEdit={() => onEdit && onEdit(t)} onDelete={() => onDelete && onDelete(t.id)} />
+                    </div>
+                  );
+                })}
+
+                <div className="px-2.5 py-2 f-line">
+                  <Button size="sm" variant="ghost" onClick={() => onAdd && onAdd(p.nom === SANS_PROJET ? '' : p.nom)}>
+                    <Plus size={14} /> Ajouter à ce projet
+                  </Button>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+
+        {/* Acheteurs */}
+        {acheteurs.length > 0 && (
+          <Card className="min-w-0" style={{ flex: '1 1 300px' }}>
+            <PanelHead title="Acheteurs">
+              <span className="flex items-center gap-2.5 text-xs t-ink3">
+                <span className="inline-flex items-center gap-1.5"><span className="f-sq" style={{ background: 'var(--m-ok)' }} />Encaissé</span>
+                <span className="inline-flex items-center gap-1.5"><span className="f-sq" style={{ background: 'var(--m-wait)' }} />En attente</span>
+              </span>
+            </PanelHead>
+            <div className="flex flex-col p-1.5">
+              {acheteurs.map(a => {
+                const selectable = a.nom !== 'Non précisé';
+                const active = activeAcheteur === a.nom;
+                return (
+                  <button
+                    key={a.nom}
+                    type="button"
+                    disabled={!selectable}
+                    onClick={() => setAcheteurFilter(active ? 'all' : a.nom)}
+                    aria-pressed={active}
+                    className={`f-buyer no-touch-grow ${active ? 'on' : ''}`}
+                  >
+                    <span className="truncate font-medium t-ink">{a.nom}</span>
+                    <span className="f-num text-right font-medium t-ink">{formatEUR(a.total)}</span>
+                    <span className="col-span-2 flex gap-0.5 h-1.5">
+                      {a.total - a.attente > 0 && <span className="rounded-sm" style={{ flex: `${a.total - a.attente} 1 0px`, background: 'var(--m-ok)' }} />}
+                      {a.attente > 0 && <span className="rounded-sm" style={{ flex: `${a.attente} 1 0px`, background: 'var(--m-wait)' }} />}
+                      {acheteurMax - a.total > 0 && <span style={{ flex: `${acheteurMax - a.total} 1 0px` }} />}
+                    </span>
+                    {a.attente > 0 && <span className="col-span-2 text-xs f-num t-warn">{formatEUR(a.attente)} en attente</span>}
+                  </button>
                 );
               })}
             </div>
-
-            <div className="mt-3">
-              <Button size="sm" variant="ghost" onClick={() => onAdd && onAdd(p.nom === SANS_PROJET ? '' : p.nom)}>
-                <Plus size={14} /> Ajouter à ce projet
-              </Button>
-            </div>
           </Card>
-        );
-      })}
+        )}
+      </div>
 
       <JustificatifViewer
         open={!!viewingJustif}
@@ -4090,7 +3864,7 @@ const CategoryAnalytics = ({ transactions, categories, tab, period }) => {
           <p className="font-serif text-2xl text-emerald-700 mt-1">{formatEUR(totalRevenus)}</p>
         </Card>
         <Card className="p-4">
-          <p className="text-xs uppercase tracking-wider text-stone-500">Solde</p>
+          <p className="text-[10px] md:text-xs uppercase tracking-wider text-stone-500">Solde</p>
           <p className={`font-serif text-2xl mt-1 ${totalRevenus - totalDepenses >= 0 ? 'text-stone-900' : 'text-rose-700'}`}>
             {formatEUR(totalRevenus - totalDepenses)}
           </p>
@@ -4098,7 +3872,7 @@ const CategoryAnalytics = ({ transactions, categories, tab, period }) => {
       </div>
 
       <Card className="p-5">
-        <h3 className="font-serif text-lg text-stone-900 mb-4">Détail par catégorie</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500 mb-4">Détail par catégorie</h3>
         {catData.length === 0 ? (
           <p className="text-stone-500 text-sm py-4 text-center">Aucune transaction sur la période sélectionnée.</p>
         ) : (
@@ -4107,7 +3881,7 @@ const CategoryAnalytics = ({ transactions, categories, tab, period }) => {
               const showDep = tab !== 'revenu' && c.depenses > 0;
               const showRev = tab !== 'dépense' && c.revenus > 0;
               return (
-                <div key={c.id} className="p-3 bg-stone-50 rounded-xl">
+                <div key={c.id} className="py-3 row-flat border-b border-stone-200 last:border-b-0">
                   <div className="flex items-center gap-3 mb-2">
                     <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
                     <p className="font-medium text-stone-900 flex-1">{c.name}</p>
@@ -4159,7 +3933,7 @@ const CategoryAnalytics = ({ transactions, categories, tab, period }) => {
       {tab === 'all' && catData.some(c => c.depenses > 0) && catData.some(c => c.revenus > 0) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Card className="p-5">
-            <h3 className="font-serif text-lg text-stone-900 mb-4">Répartition des dépenses</h3>
+            <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500 mb-4">Répartition des dépenses</h3>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -4177,7 +3951,7 @@ const CategoryAnalytics = ({ transactions, categories, tab, period }) => {
             </div>
           </Card>
           <Card className="p-5">
-            <h3 className="font-serif text-lg text-stone-900 mb-4">Répartition des revenus</h3>
+            <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500 mb-4">Répartition des revenus</h3>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -4213,13 +3987,13 @@ const CategoriesPage = ({ transactions, allTransactions, categories, onCategorie
     <div className="space-y-4">
       {/* Ligne 1 : Analyse/Gérer (icônes seules) + Tout/Dépenses/Revenus (visible quand stats actif) */}
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
+        <div className="seg flex items-center gap-0.5">
           <button
             onClick={() => setTab('stats')}
             title="Analyse"
             aria-label="Analyse"
             className={`inline-flex items-center justify-center w-9 h-8 rounded-lg transition ${
-              tab === 'stats' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+              tab === 'stats' ? 'bg-stone-900 text-stone-50' : 'text-stone-600 hover:text-stone-900'
             }`}
           >
             <BarChart3 size={15} />
@@ -4229,7 +4003,7 @@ const CategoriesPage = ({ transactions, allTransactions, categories, onCategorie
             title="Gérer"
             aria-label="Gérer"
             className={`inline-flex items-center justify-center w-9 h-8 rounded-lg transition ${
-              tab === 'manage' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+              tab === 'manage' ? 'bg-stone-900 text-stone-50' : 'text-stone-600 hover:text-stone-900'
             }`}
           >
             <Settings size={15} />
@@ -4237,7 +4011,7 @@ const CategoriesPage = ({ transactions, allTransactions, categories, onCategorie
         </div>
 
         {tab === 'stats' && (
-          <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
+          <div className="seg flex items-center gap-0.5">
             {[
               { id: 'all', label: 'Tout' },
               { id: 'dépense', label: 'Dépenses' },
@@ -4247,7 +4021,7 @@ const CategoriesPage = ({ transactions, allTransactions, categories, onCategorie
                 key={t.id}
                 onClick={() => setFilterType(t.id)}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                  filterType === t.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+                  filterType === t.id ? 'bg-stone-900 text-stone-50' : 'text-stone-600 hover:text-stone-900'
                 }`}
               >
                 {t.label}
@@ -4259,7 +4033,7 @@ const CategoriesPage = ({ transactions, allTransactions, categories, onCategorie
 
       {/* Ligne 2 : sélecteur de temporalité, pleine largeur (uniquement si stats actif) */}
       {tab === 'stats' && (
-        <div className="flex items-stretch w-full bg-stone-100 p-1 rounded-xl">
+        <div className="seg flex items-stretch w-full gap-0.5">
           {[
             { id: 'all', label: 'Tout l\'historique' },
             { id: 'year', label: '12 mois' },
@@ -4270,7 +4044,7 @@ const CategoriesPage = ({ transactions, allTransactions, categories, onCategorie
               key={p.id}
               onClick={() => setPeriod(p.id)}
               className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                period === p.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-900'
+                period === p.id ? 'bg-stone-900 text-stone-50' : 'text-stone-600 hover:text-stone-900'
               }`}
             >
               {p.label}
@@ -4289,12 +4063,14 @@ const CategoriesPage = ({ transactions, allTransactions, categories, onCategorie
 // CATÉGORIES (gestion)
 // ============================================================
 
-const CategoriesView = ({ categories, transactions, onCategoriesChange }) => {
+const CategoriesView = ({ categories, transactions, onCategoriesChange, embedded = false }) => {
   const [editing, setEditing] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [newCat, setNewCat] = useState({ name: '', color: '#84a98c' });
   const [deleteAsk, setDeleteAsk] = useState(null);
   const [reassignTo, setReassignTo] = useState('');
+  const [showAll, setShowAll] = useState(false);
+  const CAT_LIMIT = 5;
 
   const palette = ['#84a98c', '#52796f', '#cad2c5', '#a98467', '#d8a48f', '#bb8588', '#3d5a80',
                    '#9c9c9c', '#e07a5f', '#81b29a', '#f2cc8f', '#3a86ff', '#8338ec', '#ff006e'];
@@ -4304,6 +4080,7 @@ const CategoriesView = ({ categories, transactions, onCategoriesChange }) => {
     onCategoriesChange([...categories, { id: 'cat_' + uuid(), name: newCat.name.trim(), color: newCat.color }]);
     setNewCat({ name: '', color: '#84a98c' });
     setShowAdd(false);
+    setShowAll(true);
   };
 
   const updateCategory = (id, updates) => {
@@ -4328,116 +4105,162 @@ const CategoriesView = ({ categories, transactions, onCategoriesChange }) => {
     setDeleteAsk(null);
   };
 
+  const visibles = showAll || categories.length <= CAT_LIMIT
+    ? categories
+    : categories.filter((c, i) => i < CAT_LIMIT || c.id === editing);
+
+  const liste = (
+    <>
+      {visibles.map((c, i) => {
+        const count = transactions.filter(t => getCatIds(t).includes(c.id)).length;
+        return (
+          <div key={c.id} className={`flex items-center gap-3 min-h-[44px] py-1.5 ${i > 0 ? 'f-line' : ''}`}>
+            {editing === c.id ? (
+              <>
+                <input
+                  type="color"
+                  value={c.color}
+                  onChange={(e) => updateCategory(c.id, { color: e.target.value })}
+                  className="f-color"
+                  aria-label="Couleur"
+                />
+                <Input
+                  value={c.name}
+                  onChange={(e) => updateCategory(c.id, { name: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === 'Enter') setEditing(null); }}
+                  className="flex-1"
+                  aria-label="Nom de la catégorie"
+                  autoFocus
+                />
+                <IconButton label="Valider" onClick={() => setEditing(null)}><Check size={15} /></IconButton>
+              </>
+            ) : (
+              <>
+                <span className="w-3 h-3 rounded-[3px] shrink-0" style={{ backgroundColor: c.color }} />
+                <span className="flex-1 min-w-0 truncate t-ink">{c.name}</span>
+                <span className="text-xs f-num t-muted">{count}</span>
+                <span className="flex gap-0.5">
+                  <IconButton label={`Modifier ${c.name}`} onClick={() => setEditing(c.id)}><Pencil size={14} /></IconButton>
+                  <IconButton label={`Supprimer ${c.name}`} danger onClick={() => handleDelete(c)}><Trash2 size={14} /></IconButton>
+                </span>
+              </>
+            )}
+          </div>
+        );
+      })}
+      {categories.length > CAT_LIMIT && (
+        <div className="f-line py-1">
+          <button
+            type="button"
+            onClick={() => setShowAll(v => !v)}
+            className="no-touch-grow inline-flex items-center gap-1 h-8 font-medium t-ink3 hover:opacity-70"
+          >
+            {showAll ? 'Voir moins' : `Voir plus (${categories.length - CAT_LIMIT})`}
+            <ChevronDown size={14} className={showAll ? 'rotate-180' : ''} />
+          </button>
+        </div>
+      )}
+    </>
+  );
+
   return (
-    <div className="space-y-4">
-      <Card className="p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-serif text-lg text-stone-900">Catégories</h3>
-          <Button size="sm" onClick={() => setShowAdd(true)}>
-            <Plus size={14} /> Nouvelle catégorie
-          </Button>
-        </div>
+    <div>
+      {embedded ? (
+        <section className="flex flex-col">
+          <div className="f-sec-h">
+            <h4>Catégories</h4>
+            <Button variant="ghost" size="sm" onClick={() => setShowAdd(true)}>
+              <Plus size={14} /> Nouvelle
+            </Button>
+          </div>
+          <div className="f-box">{liste}</div>
+        </section>
+      ) : (
+        <Card>
+          <PanelHead title="Catégories">
+            <Button size="sm" onClick={() => setShowAdd(true)}>
+              <Plus size={14} /> Nouvelle catégorie
+            </Button>
+          </PanelHead>
+          <div className="px-4">{liste}</div>
+        </Card>
+      )}
 
-        <div className="space-y-2">
-          {categories.map(c => {
-            const count = transactions.filter(t => getCatIds(t).includes(c.id)).length;
-            return (
-              <div key={c.id} className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl">
-                {editing === c.id ? (
-                  <>
-                    <input
-                      type="color"
-                      value={c.color}
-                      onChange={(e) => updateCategory(c.id, { color: e.target.value })}
-                      className="w-9 h-9 rounded-lg cursor-pointer border-stone-200"
-                    />
-                    <Input
-                      value={c.name}
-                      onChange={(e) => updateCategory(c.id, { name: e.target.value })}
-                      className="flex-1"
-                    />
-                    <Button size="sm" variant="ghost" onClick={() => setEditing(null)}><Check size={16} /></Button>
-                  </>
-                ) : (
-                  <>
-                    <span className="w-9 h-9 rounded-lg" style={{ backgroundColor: c.color }} />
-                    <div className="flex-1">
-                      <p className="font-medium text-stone-900">{c.name}</p>
-                      <p className="text-xs text-stone-500">{count} transaction{count > 1 ? 's' : ''}</p>
-                    </div>
-                    <Button size="sm" variant="ghost" onClick={() => setEditing(c.id)}>
-                      <Edit2 size={14} />
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => handleDelete(c)} title="Supprimer">
-                      <Trash2 size={14} className="text-rose-600" />
-                    </Button>
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </Card>
-
-      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Nouvelle catégorie">
-        <div className="space-y-4">
-          <div>
-            <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Nom</label>
+      <Modal
+        open={showAdd}
+        onClose={() => setShowAdd(false)}
+        title="Nouvelle catégorie"
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowAdd(false)}>Annuler</Button>
+            <Button onClick={addCategory}>Créer</Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <Field label="Nom">
             <Input
               value={newCat.name}
               onChange={(e) => setNewCat({ ...newCat, name: e.target.value })}
-              placeholder="Ex. Voyages, Études..."
+              onKeyDown={(e) => { if (e.key === 'Enter') addCategory(); }}
+              placeholder="Voyages, Études…"
               autoFocus
             />
-          </div>
-          <div>
-            <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Couleur</label>
+          </Field>
+          <Field as="div" label="Couleur">
             <div className="flex flex-wrap gap-2">
               {palette.map(col => (
                 <button
                   key={col}
+                  type="button"
+                  aria-label={`Couleur ${col}`}
+                  aria-pressed={newCat.color === col}
                   onClick={() => setNewCat({ ...newCat, color: col })}
-                  className={`w-9 h-9 rounded-lg transition ${newCat.color === col ? 'ring-2 ring-offset-2 ring-stone-900' : ''}`}
-                  style={{ backgroundColor: col }}
+                  className="f-swatch no-touch-grow"
+                  style={{ backgroundColor: col, boxShadow: newCat.color === col ? '0 0 0 2px var(--surface), 0 0 0 4px var(--ink)' : undefined }}
                 />
               ))}
               <input
                 type="color"
                 value={newCat.color}
                 onChange={(e) => setNewCat({ ...newCat, color: e.target.value })}
-                className="w-9 h-9 rounded-lg cursor-pointer"
+                className="f-color"
+                aria-label="Autre couleur"
               />
             </div>
-          </div>
-          <div className="flex gap-2 pt-2">
-            <Button variant="secondary" onClick={() => setShowAdd(false)} className="flex-1">Annuler</Button>
-            <Button onClick={addCategory} className="flex-1">Créer</Button>
-          </div>
+          </Field>
         </div>
       </Modal>
 
-      <Modal open={!!deleteAsk} onClose={() => setDeleteAsk(null)} title="Réaffecter les transactions">
+      <Modal
+        open={!!deleteAsk}
+        onClose={() => setDeleteAsk(null)}
+        title="Réaffecter les transactions"
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeleteAsk(null)}>Annuler</Button>
+            <Button variant="danger" onClick={confirmDelete}>Supprimer et réaffecter</Button>
+          </>
+        }
+      >
         {deleteAsk && (
-          <div className="space-y-4">
-            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex items-start gap-2">
-              <AlertCircle className="text-amber-700 mt-0.5 shrink-0" size={18} />
-              <p className="text-sm text-stone-700">
-                <strong>{transactions.filter(t => getCatIds(t).includes(deleteAsk.id)).length}</strong> transaction(s)
-                utilisent encore la catégorie « {deleteAsk.name} ». Choisissez une catégorie de remplacement avant de supprimer.
+          <div className="flex flex-col gap-4">
+            <div className="flex items-start gap-2.5 p-3 rounded-lg" style={{ background: 'var(--warn-bg)', color: 'var(--warn-ink)' }}>
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <p>
+                <strong className="f-num">{transactions.filter(t => getCatIds(t).includes(deleteAsk.id)).length}</strong> transaction(s)
+                {' '}utilisent « {deleteAsk.name} ».
               </p>
             </div>
-            <div>
-              <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Réaffecter vers</label>
+            <Field label="Réaffecter vers">
               <Select value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
                 {categories.filter(c => c.id !== deleteAsk.id).map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </Select>
-            </div>
-            <div className="flex gap-2 pt-2">
-              <Button variant="secondary" onClick={() => setDeleteAsk(null)} className="flex-1">Annuler</Button>
-              <Button variant="primary" onClick={confirmDelete} className="flex-1">Supprimer et réaffecter</Button>
-            </div>
+            </Field>
           </div>
         )}
       </Modal>
@@ -4467,103 +4290,89 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
     })
     .sort((a, b) => b.date.localeCompare(a.date));
 
+  // Regroupement par mois (liste déjà triée de la plus récente à la plus ancienne)
+  const groupes = [];
+  filtered.forEach(t => {
+    const key = (t.date || '').slice(0, 7);
+    let g = groupes[groupes.length - 1];
+    if (!g || g.key !== key) {
+      g = { key, txs: [], depenses: 0, revenus: 0 };
+      groupes.push(g);
+    }
+    g.txs.push(t);
+    if (t.type === 'revenu') g.revenus += Math.abs(t.montant);
+    else g.depenses += Math.abs(t.montant);
+  });
+
   return (
-    <Card className="p-5">
-      <h3 className="font-serif text-lg text-stone-900 mb-3">Toutes les transactions</h3>
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-          <Input
+    <div className="flex flex-col gap-4">
+      <PageHeader title="Transactions" meta={`${filtered.length} transaction${filtered.length > 1 ? 's' : ''}`} />
+
+      <Card className="overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 px-3 md:px-4 py-3" style={{ borderBottom: '1px solid var(--line)' }}>
+          <SearchInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Rechercher…"
-            className="pl-9 w-full"
+            placeholder="Rechercher un libellé"
+            style={{ flex: '1 1 240px' }}
           />
+          <Select value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{ flex: '1 1 140px', maxWidth: 180 }} aria-label="Type">
+            <option value="all">Tous types</option>
+            <option value="dépense">Dépenses</option>
+            <option value="revenu">Revenus</option>
+          </Select>
+          <Select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} style={{ flex: '1 1 160px', maxWidth: 220 }} aria-label="Catégorie">
+            <option value="all">Toutes catégories</option>
+            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </Select>
         </div>
-        <Select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="flex-1 min-w-[120px] md:flex-none md:w-36">
-          <option value="all">Tous types</option>
-          <option value="dépense">Dépenses</option>
-          <option value="revenu">Revenus</option>
-        </Select>
-        <Select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="flex-1 min-w-[140px] md:flex-none md:w-44">
-          <option value="all">Toutes catégories</option>
-          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </Select>
-      </div>
 
-      {filtered.length === 0 ? (
-        <p className="text-stone-500 text-sm py-6 text-center">Aucune transaction.</p>
-      ) : (
-        <div className="space-y-1.5">
-          {filtered.map(t => (
-            <div key={t.id} className="group flex items-center gap-3 p-3 bg-stone-50 rounded-xl hover:bg-stone-100 transition">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <p className="font-medium text-stone-900 truncate">{t.libelle}</p>
-                  {t.justificatif && (
-                    <button
-                      onClick={() => setViewingJustif(t.justificatif)}
-                      className="inline-flex items-center gap-0.5 text-stone-500 hover:text-stone-900 transition shrink-0"
-                      title="Voir la facture jointe"
-                    >
-                      <Paperclip size={12} />
-                    </button>
-                  )}
-                  <DuBadge t={t} /><EtalBadge t={t} />
-                  {t.type === 'revenu' && t.recu === false && (
-                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 shrink-0">
-                      <Clock size={9} /> Attente
-                    </span>
-                  )}
-                </div>
-                {/* Métadonnées en dessous : date · catégorie(s) avec pastilles colorées */}
-                <div className="flex items-center gap-2 text-xs text-stone-500 mt-0.5 flex-wrap">
-                  <span>{formatDateFR(t.date)}</span>
-                  {getCatIds(t).length > 0 && (
-                    <>
-                      <span className="text-stone-300">·</span>
-                      <span className="inline-flex items-center gap-1 truncate">
-                        {getCatIds(t).slice(0, 2).map(id => {
-                          const cat = categories.find(c => c.id === id);
-                          if (!cat) return null;
-                          return (
-                            <span key={id} className="inline-flex items-center gap-1">
-                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
-                              <span>{cat.name}</span>
-                            </span>
-                          );
-                        })}
-                        {getCatIds(t).length > 2 && (
-                          <span className="text-stone-400">+{getCatIds(t).length - 2}</span>
-                        )}
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-              <p className={`font-serif text-base md:text-lg tabular-nums shrink-0 text-right ${
-                t.type === 'revenu' ? 'text-emerald-700' : 'text-stone-900'
-              }`}>
-                {t.type === 'revenu' ? '+' : '−'} {formatEUR(Math.abs(t.montant))}
-              </p>
-              <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition shrink-0">
-                <Button size="sm" variant="ghost" onClick={() => onEdit(t)}>
-                  <Edit2 size={14} />
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => onDelete(t.id)}>
-                  <Trash2 size={14} className="text-rose-600" />
-                </Button>
-              </div>
+        {filtered.length === 0 ? (
+          <p className="t-muted text-center px-4 py-10">Aucune transaction.</p>
+        ) : (
+          <div>
+            <div className="tx-row tx-head">
+              <span>Date</span><span>Libellé</span><span>Catégories</span><span className="text-right">Montant</span><span />
             </div>
-          ))}
-        </div>
-      )}
+            {groupes.map(g => (
+              <div key={g.key}>
+                <div className="f-group-h">
+                  <span className="font-semibold t-ink">{libelleMois(g.key)}</span>
+                  <span className="f-num text-xs t-muted">
+                    {g.depenses > 0 && <span>−{formatEUR(g.depenses)}</span>}
+                    {g.depenses > 0 && g.revenus > 0 && <span className="mx-2 t-faint">|</span>}
+                    {g.revenus > 0 && <span className="t-pos">+{formatEUR(g.revenus)}</span>}
+                  </span>
+                </div>
+                {g.txs.map((t, i) => (
+                  <div key={t.id} className={`f-row tx-row ${i > 0 ? 'f-line' : ''}`}>
+                    <span className="tx-date f-num t-muted">{jourMoisCourt(t.date)}</span>
+                    <span className="tx-lib flex items-center gap-1.5 flex-wrap min-w-0">
+                      <span className="truncate font-medium t-ink">{t.libelle}</span>
+                      {t.justificatif && <JustifButton onClick={() => setViewingJustif(t.justificatif)} />}
+                      <DuBadge t={t} /><EtalBadge t={t} />
+                      {t.type === 'revenu' && t.recu === false && <PendingBadge />}
+                    </span>
+                    <span className="tx-cats min-w-0 truncate text-[12.5px]">
+                      <CatBadges ids={getCatIds(t)} categories={categories} max={2} />
+                    </span>
+                    <span className={`tx-amt f-num text-right font-medium ${t.type === 'revenu' ? 't-pos' : 't-ink'}`}>
+                      {t.type === 'revenu' ? '+' : '−'}{formatEUR(Math.abs(t.montant))}
+                    </span>
+                    <span className="tx-act"><RowActions onEdit={() => onEdit(t)} onDelete={() => onDelete(t.id)} /></span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
       <JustificatifViewer
         open={!!viewingJustif}
         onClose={() => setViewingJustif(null)}
         justificatif={viewingJustif}
       />
-    </Card>
+    </div>
   );
 };
 
@@ -4664,7 +4473,7 @@ const Dashboard = ({ transactions, categories, allTransactions, societePending =
       {/* KPIs : 4 indicateurs synthétiques, organisés du plus important au moins */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card className="p-4">
-          <p className="text-xs uppercase tracking-wider text-emerald-700">Revenus</p>
+          <p className="text-[10px] md:text-xs uppercase tracking-wider text-emerald-700">Revenus</p>
           <p className="font-serif text-2xl text-emerald-700 mt-1 tabular-nums">{formatEUR(revenue)}</p>
           <p className="text-xs text-stone-500 mt-1">
             {(() => {
@@ -4684,7 +4493,7 @@ const Dashboard = ({ transactions, categories, allTransactions, societePending =
           </p>
         </Card>
         <Card className="p-4">
-          <p className="text-xs uppercase tracking-wider text-stone-500">Dépenses</p>
+          <p className="text-[10px] md:text-xs uppercase tracking-wider text-stone-500">Dépenses</p>
           <p className="font-serif text-2xl text-stone-900 mt-1 tabular-nums">{formatEUR(grossExpenses)}</p>
           <p className="text-xs text-stone-500 mt-1">
             {grossExpenses !== netExpenses ? (
@@ -4731,7 +4540,7 @@ const Dashboard = ({ transactions, categories, allTransactions, societePending =
       {/* Mini graphique + récents */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2 p-5">
-          <h3 className="font-serif text-lg text-stone-900 mb-4">4 dernières semaines</h3>
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500 mb-4">4 dernières semaines</h3>
           <div className="h-44">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={miniWeeks}>
@@ -4746,7 +4555,7 @@ const Dashboard = ({ transactions, categories, allTransactions, societePending =
         </Card>
 
         <Card className="p-5">
-          <h3 className="font-serif text-lg text-stone-900 mb-4">Dernières transactions</h3>
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500 mb-4">Dernières transactions</h3>
           {recent.length === 0 ? (
             <p className="text-stone-500 text-sm">Aucune transaction.</p>
           ) : (
@@ -4789,6 +4598,7 @@ const SettingsModal = ({
   isMobileTouch,
   onExport, onImportClick,
   txCount, catCount,
+  categories = [], allTransactions = [], onCategoriesChange,
 }) => {
   const [tokenInput, setTokenInput] = useState('');
   const [showToken, setShowToken] = useState(false);
@@ -4823,250 +4633,154 @@ const SettingsModal = ({
     }
   };
 
+  const Titre = ({ children, action }) => (
+    <div className="f-sec-h">
+      <h4>{children}</h4>
+      {action}
+    </div>
+  );
+  const Ligne = ({ label, children, onClick, icon: Icon }) => {
+    const inner = (
+      <>
+        {Icon && <Icon size={16} className="t-muted shrink-0" />}
+        <span className="flex-1 min-w-0 text-left t-ink">{label}</span>
+        {children}
+      </>
+    );
+    const cls = 'f-ln w-full flex items-center gap-3 min-h-[46px]';
+    return onClick
+      ? <button type="button" onClick={onClick} className={`${cls} hover:opacity-70`}>{inner}</button>
+      : <div className={cls}>{inner}</div>;
+  };
+  const synchroLabel = syncStatus === 'saving' ? 'Sauvegarde…'
+    : syncStatus === 'loading' ? 'Chargement…'
+    : syncStatus === 'error' ? 'Erreur'
+    : lastSyncAt ? new Date(lastSyncAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+  const synchroColor = syncStatus === 'error' ? 'var(--neg)'
+    : (syncStatus === 'saving' || syncStatus === 'loading') ? 'var(--m-wait-2)'
+    : 'var(--m-ok)';
+
   return (
     <Modal open={open} onClose={onClose} title="Paramètres" size="md">
-      <div className="space-y-6">
+      <div className="flex flex-col gap-6">
 
-        {/* ============================================================
-            Section : Apparence (thème + mode tactile)
-            ============================================================ */}
-        <section>
-          <div className="flex items-center gap-2 mb-3">
-            <Eye size={16} className="text-stone-700" />
-            <h4 className="font-medium text-stone-900">Apparence</h4>
-          </div>
-
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Thème</label>
-              <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
-                {[
+        <section className="flex flex-col">
+          <Titre>Apparence</Titre>
+          <div className="f-box">
+            <Ligne label="Thème">
+              <Seg
+                label="Thème"
+                value={themePref}
+                onChange={onThemeChange}
+                options={[
                   { id: 'auto', label: 'Auto' },
                   { id: 'light', label: 'Clair' },
                   { id: 'dark', label: 'Sombre' },
-                ].map(t => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => onThemeChange(t.id)}
-                    className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition border ${
-                      themePref === t.id
-                        ? 'bg-white text-stone-900 border-stone-300 shadow-sm'
-                        : 'bg-transparent border-transparent text-stone-600 hover:text-stone-900'
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-stone-500 mt-1.5">
-                <strong>Auto</strong> suit les préférences de ton système (jour/nuit selon l'heure ou l'OS).
-              </p>
-            </div>
-
-            {/* Toggle background animé */}
-            <div>
-              <label className="flex items-center justify-between gap-3 cursor-pointer p-3 bg-stone-50 rounded-xl hover:bg-stone-100 transition">
-                <div>
-                  <p className="text-sm font-medium text-stone-900">Background animé</p>
-                  <p className="text-xs text-stone-500 mt-0.5">Vague de particules derrière l'app</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={onBgToggle}
-                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-                    bgEnabled ? 'bg-stone-900' : 'bg-stone-300'
-                  }`}
-                  role="switch"
-                  aria-checked={bgEnabled}
-                >
-                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                    bgEnabled ? 'translate-x-6' : 'translate-x-1'
-                  }`} />
-                </button>
-              </label>
-            </div>
-
-            <div className="flex items-center gap-2 p-3 bg-stone-50 rounded-xl">
-              {isMobileTouch ? (
-                <>
-                  <CheckCircle2 size={14} className="text-emerald-700 shrink-0" />
-                  <p className="text-xs text-stone-700">
-                    <strong>Mode tactile actif</strong> — boutons agrandis, modales en plein écran, hover désactivé. Détecté automatiquement (mobile ou tablette).
-                  </p>
-                </>
-              ) : (
-                <>
-                  <Circle size={14} className="text-stone-400 shrink-0" />
-                  <p className="text-xs text-stone-600">
-                    Mode tactile inactif (souris détectée). L'app passe automatiquement en mode tactile sur écran ≤ 768 px ou sur appareil tactile.
-                  </p>
-                </>
-              )}
-            </div>
+                ]}
+              />
+            </Ligne>
+            <Ligne label="Fond animé">
+              <button
+                type="button"
+                onClick={onBgToggle}
+                className={`f-switch no-touch-grow ${bgEnabled ? 'on' : ''}`}
+                role="switch"
+                aria-checked={bgEnabled}
+                aria-label="Fond animé"
+              >
+                <span />
+              </button>
+            </Ligne>
           </div>
         </section>
 
-        <div className="border-t border-stone-200" />
+        <CategoriesView embedded categories={categories} transactions={allTransactions} onCategoriesChange={onCategoriesChange} />
 
-        {/* ============================================================
-            Section : Synchronisation Gist
-            ============================================================ */}
-        <section>
-          <div className="flex items-center gap-2 mb-3">
-            <Cloud size={16} className="text-stone-700" />
-            <h4 className="font-medium text-stone-900">Synchronisation GitHub Gist</h4>
-          </div>
-
-          <p className="text-sm text-stone-600 mb-3">
-            Sauvegarde automatique de tes données dans un Gist privé sur ton compte GitHub.
-            Tes transactions et catégories sont synchronisées entre tous tes appareils, sans serveur tiers.
-          </p>
+        <section className="flex flex-col">
+          <Titre
+            action={!isConnected && (
+              <a
+                href="https://github.com/settings/tokens?type=beta"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[12.5px] t-ink3 underline underline-offset-2 hover:opacity-70"
+              >
+                Créer un token
+              </a>
+            )}
+          >
+            Synchronisation Gist
+          </Titre>
 
           {!isConnected ? (
-            <div className="space-y-3">
-              <details className="bg-stone-50 border border-stone-200 rounded-xl overflow-hidden">
-                <summary className="px-4 py-2.5 cursor-pointer text-sm font-medium text-stone-700 hover:bg-stone-100 transition list-none flex items-center gap-2">
-                  <AlertCircle size={14} className="text-stone-500" />
-                  Comment générer un token GitHub ?
-                </summary>
-                <div className="px-4 pb-4 pt-2 text-xs text-stone-600 space-y-2 border-t border-stone-200">
-                  <ol className="list-decimal list-inside space-y-1.5 leading-relaxed">
-                    <li>Va sur <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener noreferrer" className="text-stone-900 underline">github.com/settings/tokens</a></li>
-                    <li>Clique sur <strong>"Generate new token"</strong> → <strong>"Fine-grained personal access token"</strong></li>
-                    <li>Donne un nom (ex. <em>Finances perso</em>) et une expiration (ex. 1 an)</li>
-                    <li>Sous <strong>"Account permissions"</strong>, trouve <strong>"Gists"</strong> et passe-le à <strong>Read and write</strong></li>
-                    <li>Clique <strong>"Generate token"</strong>, copie le token (ghp_...) et colle-le ci-dessous</li>
-                  </ol>
-                  <p className="text-stone-500 pt-1 border-t border-stone-200">
-                    Ton token est stocké uniquement dans ce navigateur. Il n'est jamais envoyé ailleurs que sur l'API GitHub.
-                  </p>
-                </div>
-              </details>
-
-              <div>
-                <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1.5">Token GitHub</label>
-                <div className="relative">
-                  <Input
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <label className="relative flex-1 flex items-center min-w-0">
+                  <input
                     type={showToken ? 'text' : 'password'}
                     value={tokenInput}
                     onChange={(e) => setTokenInput(e.target.value)}
-                    placeholder="github_pat_… ou ghp_…"
-                    className="font-mono text-xs pr-10"
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleConnect(); }}
+                    placeholder="Token GitHub"
+                    aria-label="Token GitHub"
+                    className="f-field f-mono"
+                    style={{ paddingRight: 40, fontSize: 12.5 }}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowToken(s => !s)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-700"
+                  <IconButton
+                    label={showToken ? 'Masquer' : 'Afficher'}
+                    onClick={() => setShowToken(v => !v)}
+                    className="absolute right-1 no-touch-grow"
                   >
-                    {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                </div>
+                    {showToken ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </IconButton>
+                </label>
+                <Button onClick={handleConnect} disabled={busy || !tokenInput.trim()}>
+                  {busy ? 'Connexion…' : 'Connecter'}
+                </Button>
               </div>
-
               {(localError || syncError) && (
-                <div className="bg-rose-50 border border-rose-100 rounded-xl p-3 flex items-start gap-2">
-                  <AlertCircle className="text-rose-700 mt-0.5 shrink-0" size={14} />
-                  <p className="text-xs text-rose-700">{localError || syncError}</p>
-                </div>
+                <p className="text-xs t-neg">{localError || syncError}</p>
               )}
-
-              <Button onClick={handleConnect} disabled={busy || !tokenInput.trim()} className="w-full">
-                {busy ? <RefreshCw size={14} className="animate-spin" /> : <Cloud size={14} />}
-                {busy ? 'Connexion…' : 'Connecter GitHub Gist'}
-              </Button>
             </div>
           ) : (
-            <div className="space-y-3">
-              <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 flex items-start gap-2">
-                <CheckCircle2 className="text-emerald-700 mt-0.5 shrink-0" size={16} />
-                <div className="flex-1 text-sm">
-                  <p className="text-stone-900 font-medium">Synchronisation active</p>
-                  <p className="text-stone-600 text-xs mt-0.5">
-                    Connecté en tant que <strong>{gistUser || '—'}</strong>
-                  </p>
-                  <p className="text-stone-500 text-xs mt-0.5 font-mono break-all">
-                    Gist ID : {gistId}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="bg-stone-50 rounded-xl p-3">
-                  <p className="uppercase tracking-wider text-stone-500">Statut</p>
-                  <p className="text-stone-900 font-medium mt-0.5">
-                    {syncStatus === 'saving' && 'Sauvegarde…'}
-                    {syncStatus === 'loading' && 'Chargement…'}
-                    {syncStatus === 'saved' && 'À jour'}
-                    {syncStatus === 'error' && 'Erreur'}
-                    {syncStatus === 'idle' && 'En veille'}
-                  </p>
-                </div>
-                <div className="bg-stone-50 rounded-xl p-3">
-                  <p className="uppercase tracking-wider text-stone-500">Dernière sync</p>
-                  <p className="text-stone-900 font-medium mt-0.5">
-                    {lastSyncAt ? new Date(lastSyncAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
-                  </p>
-                </div>
-              </div>
-
-              {syncError && (
-                <div className="bg-rose-50 border border-rose-100 rounded-xl p-3 flex items-start gap-2">
-                  <AlertCircle className="text-rose-700 mt-0.5 shrink-0" size={14} />
-                  <p className="text-xs text-rose-700">{syncError}</p>
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={onForceSync} disabled={syncStatus === 'loading' || syncStatus === 'saving'} className="flex-1">
-                  <RefreshCw size={13} className={syncStatus === 'loading' ? 'animate-spin' : ''} />
-                  Recharger depuis Gist
+            <div className="f-box">
+              <Ligne label="Compte">
+                <span className="truncate t-ink3">{gistUser || '—'}</span>
+              </Ligne>
+              <Ligne label="Dernière synchronisation">
+                <span className="inline-flex items-center gap-2 f-num" style={{ color: syncStatus === 'error' ? 'var(--neg)' : 'var(--ink-3)' }}>
+                  <span className="w-[7px] h-[7px] rounded-full" style={{ background: synchroColor }} />
+                  {synchroLabel}
+                </span>
+              </Ligne>
+              {syncError && <p className="text-xs t-neg py-2 f-ln">{syncError}</p>}
+              <div className="f-ln flex items-center gap-1 min-h-[46px] -ml-2">
+                <Button
+                  variant="ghost"
+                  onClick={onForceSync}
+                  disabled={syncStatus === 'loading' || syncStatus === 'saving'}
+                  className="no-touch-grow t-ink"
+                >
+                  <RefreshCw size={14} className={syncStatus === 'loading' ? 'animate-spin' : ''} />
+                  Recharger
                 </Button>
-                <Button variant="outline" size="sm" onClick={handleDisconnect} className="flex-1">
+                <Button variant="ghost" onClick={handleDisconnect} className="no-touch-grow" style={{ color: 'var(--neg)' }}>
                   Déconnecter
                 </Button>
               </div>
-
-              <p className="text-xs text-stone-500 leading-relaxed">
-                ⚠️ Si tu utilises l'app sur plusieurs appareils en parallèle, recharge depuis le Gist
-                avant de modifier — la dernière sauvegarde écrase la précédente.
-              </p>
             </div>
           )}
         </section>
 
-        <div className="border-t border-stone-200" />
-
-        {/* ============================================================
-            Section : Données (import / export local)
-            ============================================================ */}
-        <section>
-          <div className="flex items-center gap-2 mb-3">
-            <FolderOpen size={16} className="text-stone-700" />
-            <h4 className="font-medium text-stone-900">Données</h4>
-          </div>
-
-          <p className="text-sm text-stone-600 mb-3">
-            Sauvegarde et restauration locales (fichier JSON). Indépendant de la synchronisation Gist.
-            Pratique pour faire une copie ponctuelle ou migrer vers un autre appareil.
-          </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
-            <Button variant="outline" size="sm" onClick={onExport}>
-              <Download size={14} /> Exporter mes données
-            </Button>
-            <Button variant="outline" size="sm" onClick={onImportClick}>
-              <FolderOpen size={14} /> Importer mes données
-            </Button>
-          </div>
-
-          <div className="bg-stone-50 rounded-xl p-3 text-xs text-stone-600">
-            <p>
-              <strong>Contenu actuel :</strong> {txCount} transaction{txCount > 1 ? 's' : ''} · {catCount} catégorie{catCount > 1 ? 's' : ''}
-            </p>
-            <p className="mt-1 text-stone-500">
-              L'import remplace les données actuelles. Pense à exporter avant si tu veux une sauvegarde.
-            </p>
+        <section className="flex flex-col">
+          <Titre action={<span className="text-xs f-num t-muted">{txCount} transactions</span>}>Données</Titre>
+          <div className="f-box">
+            <Ligne label="Importer mes données" icon={FolderOpen} onClick={onImportClick}>
+              <ChevronRight size={15} className="t-faint" />
+            </Ligne>
+            <Ligne label="Exporter mes données" icon={Download} onClick={onExport}>
+              <ChevronRight size={15} className="t-faint" />
+            </Ligne>
           </div>
         </section>
       </div>
@@ -5157,6 +4871,365 @@ const ParticleWaveBackground = ({ isDark }) => {
 // APPLICATION PRINCIPALE
 // ============================================================
 
+// ============================================================
+// FEUILLE DE STYLE DE L'APPLICATION
+// Un jeu de variables (couleurs, filets, surfaces) décliné en clair et en sombre ;
+// les composants s'en servent via les classes f-* et t-*.
+// ============================================================
+
+const APP_CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap');
+
+:root {
+  --bg: #fafaf9; --side: #f5f5f4; --surface: #ffffff; --surface-2: #fafaf9;
+  --line: #e7e5e4; --line-soft: #f0eeec; --line-strong: #d6d3d1;
+  --ink: #1c1917; --ink-2: #44403c; --ink-3: #57534e; --muted: #78716c; --faint: #a8a29e;
+  --hover: #f5f5f4; --hover-2: #ecebe9; --seg: #ecebe9; --seg-on: #ffffff;
+  --pos: #047857; --neg: #be123c; --warn: #b45309;
+  --warn-bg: #fef3c7; --warn-ink: #92400e; --ok-bg: #d1fae5; --ok-ink: #065f46; --n-bg: #f0eeec; --n-ink: #57534e;
+  --m-ok: #059669; --m-wait: #f59e0b; --m-wait-2: #d97706;
+  --primary: #1c1917; --primary-h: #292524; --on-primary: #fafaf9;
+  --overlay: rgba(28, 25, 23, 0.36); --shadow: 0 16px 40px rgba(28, 25, 23, 0.14);
+}
+html.dark {
+  color-scheme: dark;
+  --bg: #1c1917; --side: #181513; --surface: #262220; --surface-2: #211d1b;
+  --line: #3d3835; --line-soft: #322e2b; --line-strong: #57534e;
+  --ink: #fafaf9; --ink-2: #e7e5e4; --ink-3: #d6d3d1; --muted: #a8a29e; --faint: #78716c;
+  --hover: #2f2a27; --hover-2: #36312e; --seg: #171412; --seg-on: #36312e;
+  --pos: #6ee7b7; --neg: #fda4af; --warn: #fcd34d;
+  --warn-bg: rgba(180, 83, 9, 0.24); --warn-ink: #fde68a; --ok-bg: rgba(5, 150, 105, 0.24); --ok-ink: #a7f3d0; --n-bg: #36312e; --n-ink: #d6d3d1;
+  --m-ok: #10b981; --m-wait: #f59e0b; --m-wait-2: #f59e0b;
+  --primary: #fafaf9; --primary-h: #e7e5e4; --on-primary: #1c1917;
+  --overlay: rgba(0, 0, 0, 0.6); --shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+body, html { font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); }
+.f-app { color: var(--ink); font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased; font-feature-settings: 'cv11' 1; }
+.f-app button { cursor: pointer; }
+.f-app button:disabled { cursor: not-allowed; }
+.f-num { font-variant-numeric: tabular-nums; }
+.f-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+.font-serif { font-family: inherit; font-weight: 600; letter-spacing: -0.01em; }
+.f-app :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.t-ink { color: var(--ink); } .t-ink2 { color: var(--ink-2); } .t-ink3 { color: var(--ink-3); }
+.t-muted { color: var(--muted); } .t-faint { color: var(--faint); }
+.t-pos { color: var(--pos); } .t-neg { color: var(--neg); } .t-warn { color: var(--warn); }
+
+/* Structure */
+.f-shell { display: flex; min-height: 100vh; }
+.f-side {
+  position: sticky; top: 0; height: 100vh; width: 232px; flex: none; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 18px; padding: 16px 12px;
+  background: var(--side); border-right: 1px solid var(--line);
+}
+.f-logo { width: 26px; height: 26px; border-radius: 7px; flex: none; display: inline-flex; align-items: center; justify-content: center; background: var(--primary); color: var(--on-primary); }
+.f-nav {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--ink-3); font-weight: 500; text-align: left; transition: background-color .12s, color .12s;
+}
+.f-nav:hover { background: var(--hover-2); color: var(--ink); }
+.f-nav.on, .f-nav.on:hover { background: var(--line); color: var(--ink); }
+.f-nav .ct { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+.f-nav-g { padding: 14px 10px 4px; font-size: 12px; color: var(--muted); }
+.f-nav-sync { font-weight: 400; font-size: 12px; }
+.f-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.f-main { flex: 1; min-width: 0; padding: 24px 32px 56px; }
+.f-topbar {
+  display: none; position: sticky; top: 0; z-index: 30; align-items: center; gap: 8px; min-height: 56px; padding: 6px 8px 6px 16px;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+}
+.f-bottom {
+  display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; gap: 4px;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg); border-top: 1px solid var(--line);
+}
+.f-tb {
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  height: 48px; border: 0; border-radius: 12px; background: transparent; color: var(--ink-3); font-size: 11px; font-weight: 500;
+}
+.f-tb.on { background: var(--primary); color: var(--on-primary); }
+.f-tb span { display: none; }
+@media (min-width: 640px) { .f-tb { height: 54px; } .f-tb span { display: block; } }
+@media (max-width: 1023px) {
+  .f-side { display: none; }
+  .f-topbar, .f-bottom { display: flex; }
+  .f-main { padding: 16px 16px calc(96px + env(safe-area-inset-bottom, 0px)); }
+}
+.f-ibtn-lg { width: 40px; height: 40px; border-radius: 10px; }
+.f-add { background: var(--primary); color: var(--on-primary); }
+.f-add:hover { background: var(--primary-h); color: var(--on-primary); }
+
+/* En-têtes et panneaux */
+.f-page-h { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; }
+.f-page-h h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+.f-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.f-ph { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.f-ph h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+.f-strip { display: grid; gap: 1px; background: var(--line); }
+.f-kpi { display: flex; flex-direction: column; gap: 4px; padding: 16px 18px; background: var(--surface); min-width: 0; }
+.f-kpi-l { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-3); }
+.f-kpi-v { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); line-height: 1.25; }
+.f-kpi-s { font-size: 12px; color: var(--muted); }
+.f-group-h {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px;
+  padding: 9px 16px; background: var(--surface-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line-soft);
+}
+.f-line { border-top: 1px solid var(--line-soft); }
+.f-row { transition: background-color .12s; }
+.f-row:hover { background: var(--surface-2); }
+.f-sec-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; margin-bottom: 6px; }
+.f-sec-h h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+.f-box { border: 1px solid var(--line); border-radius: 8px; padding: 0 14px; background: var(--surface); }
+.f-ln + .f-ln, .f-box > * + * { border-top: 1px solid var(--line-soft); }
+
+/* Boutons */
+.f-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px;
+  border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink);
+  font-size: 13px; font-weight: 500; white-space: nowrap; transition: background-color .12s, border-color .12s, color .12s, opacity .12s;
+}
+.f-btn:hover { background: var(--hover); }
+.f-btn:disabled { opacity: .45; }
+.f-btn-p { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.f-btn-p:hover { background: var(--primary-h); border-color: var(--primary-h); }
+.f-btn-g { background: transparent; border-color: transparent; color: var(--ink-3); padding: 0 8px; }
+.f-btn-g:hover { background: var(--hover); color: var(--ink); }
+.f-btn-d { background: #be123c; border-color: #be123c; color: #fff; }
+.f-btn-d:hover { background: #9f1239; border-color: #9f1239; }
+.f-btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.f-btn-lg { height: 38px; padding: 0 16px; font-size: 14px; }
+.f-btn-icon { width: 32px; padding: 0; flex: none; }
+.f-ibtn {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: none;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted); transition: background-color .12s, color .12s;
+}
+.f-ibtn:hover { background: var(--hover-2); color: var(--ink); }
+.f-ibtn.danger:hover { color: var(--neg); }
+.f-ibtn-xs { width: 22px; height: 22px; }
+.f-toggle-st { width: 28px; height: 28px; }
+.f-toggle {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; height: 34px; padding: 0 10px;
+  border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); font-weight: 500; white-space: nowrap;
+}
+.f-toggle:hover { background: var(--hover); }
+.f-toggle.on, .f-toggle.on:hover { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.f-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--surface); color: var(--ink); font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  transition: border-color .12s, background-color .12s;
+}
+.f-chip:hover { border-color: var(--line-strong); }
+.f-switch { position: relative; width: 36px; height: 20px; flex: none; border: 0; border-radius: 10px; padding: 0; background: var(--line-strong); transition: background-color .15s; }
+.f-switch > span { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(28, 25, 23, 0.25); transition: transform .15s; }
+.f-switch.on { background: var(--primary); }
+.f-switch.on > span { transform: translateX(16px); background: var(--on-primary); }
+
+/* Champs */
+.f-fl { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.f-label { font-size: 12.5px; font-weight: 500; color: var(--ink-2); }
+.f-field {
+  width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px;
+  background: var(--surface); color: var(--ink); font-size: 13px; transition: border-color .12s, box-shadow .12s;
+}
+.f-field::placeholder { color: var(--faint); }
+.f-field:focus { outline: none; border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.f-field:disabled { opacity: .45; }
+textarea.f-field { height: auto; padding: 8px 10px; line-height: 1.5; }
+.f-field-sm { height: 30px; padding: 0 8px; font-size: 12.5px; }
+.f-select {
+  appearance: none; -webkit-appearance: none; padding-right: 28px; text-overflow: ellipsis;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2378716c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center; background-size: 14px;
+}
+.f-search { position: relative; display: flex; align-items: center; min-width: 0; }
+.f-search > svg { position: absolute; left: 10px; color: var(--muted); pointer-events: none; }
+.f-search > input { padding-left: 32px; }
+.f-check { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--ink); }
+.f-color { width: 34px; height: 34px; flex: none; padding: 2px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.f-swatch { width: 30px; height: 30px; border: 0; border-radius: 6px; }
+.f-inset { display: flex; flex-direction: column; gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+.f-drop {
+  display: flex; align-items: center; justify-content: center; gap: 8px; height: 44px; border: 1px dashed var(--line-strong);
+  border-radius: 8px; background: var(--surface); color: var(--ink-3); font-weight: 500; transition: border-color .12s, color .12s;
+}
+.f-drop:hover { border-color: var(--muted); color: var(--ink); }
+.f-dropzone {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 44px 20px; text-align: center; cursor: pointer;
+  border: 1px dashed var(--line-strong); border-radius: 10px; background: var(--surface-2); transition: border-color .12s;
+}
+.f-dropzone:hover { border-color: var(--muted); }
+.f-dropzone.is-off { opacity: .5; cursor: default; }
+.f-dropzone-ic { width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-3); margin-bottom: 4px; }
+.f-details { border: 1px solid var(--line); border-radius: 8px; }
+.f-details > summary { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; font-weight: 500; color: var(--ink); list-style: none; cursor: pointer; }
+.f-details > summary::-webkit-details-marker { display: none; }
+.f-details[open] .f-details-chev { transform: rotate(180deg); }
+code.f-code { font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--n-bg); color: var(--ink); }
+.f-pop { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
+.f-pop-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.f-pop-item:hover { background: var(--hover); }
+
+/* Contrôle segmenté, onglets, badges */
+.f-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 7px; background: var(--seg); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.f-seg::-webkit-scrollbar { display: none; }
+.f-seg > button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none; height: 28px; padding: 0 10px;
+  border: 0; border-radius: 5px; background: transparent; color: var(--ink-3); font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  transition: background-color .12s, color .12s;
+}
+.f-seg > button:hover { color: var(--ink); }
+.f-seg > button.on { background: var(--seg-on); color: var(--ink); box-shadow: 0 1px 2px rgba(28, 25, 23, 0.08), 0 0 0 1px var(--line); }
+.f-seg > button.on.tone-dark { background: var(--primary); color: var(--on-primary); box-shadow: none; }
+.f-seg > button.on.tone-pos { background: #047857; color: #fff; box-shadow: none; }
+.f-seg > button.on.tone-ok { background: var(--ok-bg); color: var(--ok-ink); box-shadow: none; }
+.f-seg > button.on.tone-wait { background: var(--warn-bg); color: var(--warn-ink); box-shadow: none; }
+.f-seg .ct { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.f-seg.f-seg-fill { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); width: 100%; }
+.f-seg.f-seg-fill > button { height: 32px; }
+.f-tabs { display: flex; gap: 24px; overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+.f-tabs::-webkit-scrollbar { display: none; }
+.f-tab { height: 40px; padding: 0 2px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--ink-3); font-weight: 500; white-space: nowrap; }
+.f-tab:hover { color: var(--ink); }
+.f-tab.on { color: var(--ink); border-bottom-color: var(--ink); }
+.f-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: 4px; font-size: 11.5px; font-weight: 500; white-space: nowrap; flex: none; }
+.f-b-wait { background: var(--warn-bg); color: var(--warn-ink); }
+.f-b-ok { background: var(--ok-bg); color: var(--ok-ink); }
+.f-b-n { background: var(--n-bg); color: var(--n-ink); }
+.f-sq { display: inline-block; width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.f-cat { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-3); white-space: nowrap; }
+.f-track { display: block; height: 6px; border-radius: 3px; background: var(--line-soft); overflow: hidden; }
+.f-track > span { display: block; height: 100%; border-radius: 3px; transition: width .3s; }
+.f-barrow { display: grid; grid-template-columns: minmax(96px, 150px) minmax(0, 1fr) 44px 96px; align-items: center; gap: 12px; min-height: 32px; }
+@media (max-width: 479px) { .f-barrow { grid-template-columns: minmax(0, 1fr) 72px 40px 84px; gap: 8px; } }
+
+/* Lignes de registre (Société, Créances, Affaires) */
+.f-entry { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; align-items: center; column-gap: 10px; min-height: 56px; padding: 8px 12px; }
+@media (min-width: 640px) { .f-entry { grid-template-columns: 28px minmax(0, 1fr) auto 112px auto; column-gap: 12px; padding: 8px 16px; } }
+.f-buyer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; text-align: left; }
+.f-buyer:hover:not(:disabled), .f-buyer.on { background: var(--hover); }
+.f-buyer:disabled { cursor: default; }
+
+/* Transactions */
+.tx-row { display: grid; align-items: center; column-gap: 16px; row-gap: 2px; min-height: 46px; padding: 7px 16px;
+  grid-template-columns: 64px minmax(0, 1fr) minmax(0, 210px) 120px auto; grid-template-areas: "date lib cats amt act"; }
+.tx-head { min-height: 36px; background: var(--surface-2); font-size: 12px; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--line); }
+.tx-head > span:nth-child(1) { grid-area: date; } .tx-head > span:nth-child(2) { grid-area: lib; } .tx-head > span:nth-child(3) { grid-area: cats; } .tx-head > span:nth-child(4) { grid-area: amt; } .tx-head > span:nth-child(5) { grid-area: act; }
+.tx-date { grid-area: date; } .tx-lib { grid-area: lib; } .tx-cats { grid-area: cats; } .tx-amt { grid-area: amt; } .tx-act { grid-area: act; }
+@media (max-width: 767px) {
+  .tx-row { column-gap: 10px; padding: 9px 12px; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "lib lib amt" "date cats act"; }
+  .tx-head { display: none; }
+  .tx-date, .tx-cats { font-size: 12px; }
+}
+
+/* Grilles de lignes */
+.f-top { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 48px; padding: 6px 16px; }
+.f-top + .f-top { border-top: 1px solid var(--line-soft); }
+@media (min-width: 640px) { .f-top { grid-template-columns: 20px minmax(0, 1fr) auto 112px; } }
+.f-dayrow { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; align-items: center; column-gap: 12px; padding: 10px 20px; }
+.f-pickrow { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 10px 14px; cursor: pointer; }
+.f-doc-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+@media (min-width: 768px) { .f-doc-head { grid-template-columns: 200px minmax(0, 1fr); } }
+.f-hov:hover { background: var(--hover); }
+
+/* Calendrier */
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.cal-wd { padding: 7px 4px; font-size: 11px; font-weight: 500; color: var(--muted); text-align: center; }
+.cal-cell {
+  min-height: 60px; min-width: 0; padding: 3px 2px; display: flex; flex-direction: column; gap: 2px;
+  border-right: 1px solid var(--line-soft); background: var(--surface); cursor: pointer; text-align: left; transition: background-color .12s;
+}
+.cal-cell:hover { background: var(--surface-2); }
+.cal-cell.empty { background: var(--surface-2); cursor: default; }
+.cal-num { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; font-size: 11px; font-weight: 500; color: var(--muted); align-self: center; }
+.cal-num.today { background: var(--primary); color: var(--on-primary); }
+.cal-chip { display: flex; align-items: center; gap: 5px; min-width: 0; height: 16px; padding: 0 2px; border-radius: 3px; font-size: 10px; color: var(--ink); transition: opacity .15s; }
+.cal-dots { display: flex; gap: 2px; flex: none; }
+.cal-dot { width: 6px; height: 6px; border-radius: 2px; }
+.cal-week { display: none; }
+.cal-desktop { display: none; }
+.cal-mobile { display: block; }
+.cal-legend { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 1px; }
+.cal-legend::-webkit-scrollbar { display: none; }
+.cal-legend > * { flex-shrink: 0; }
+@media (min-width: 768px) {
+  .cal-grid { grid-template-columns: repeat(7, minmax(0, 1fr)) 88px; }
+  .cal-wd { padding: 8px 10px; font-size: 12px; text-align: left; }
+  .cal-wd:last-child { text-align: right; }
+  .cal-cell { min-height: 108px; padding: 6px; gap: 3px; }
+  .cal-num { width: 22px; height: 22px; font-size: 12px; align-self: auto; }
+  .cal-chip { height: 20px; padding: 0 6px; border-radius: 4px; font-size: 11.5px; }
+  .cal-week { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 9px 10px; background: var(--surface-2); }
+  .cal-desktop { display: block; }
+  .cal-dots.cal-desktop { display: flex; }
+  .cal-mobile { display: none; }
+  .cal-legend { flex-wrap: wrap; overflow-x: visible; }
+}
+
+/* Fenêtres */
+.f-overlay { background: var(--overlay); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+.f-modal { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+.f-modal-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 12px 12px 20px; border-bottom: 1px solid var(--line); }
+.f-modal-h h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink); }
+.f-modal-h h3::first-letter { text-transform: uppercase; }
+.f-modal-b { padding: 20px; }
+.f-modal-f { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--surface-2); }
+.f-form-actions {
+  position: sticky; bottom: -20px; z-index: 2; display: flex; justify-content: flex-end; gap: 8px;
+  margin: 4px -20px -20px; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--surface-2);
+}
+.f-steps { display: flex; align-items: center; gap: 10px; margin: -20px -20px 20px; padding: 10px 20px; background: var(--surface-2); border-bottom: 1px solid var(--line-soft); overflow-x: auto; }
+.f-step { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-weight: 500; white-space: nowrap; }
+.f-step b { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; font-size: 11.5px; font-weight: 600; background: var(--seg); color: var(--ink-3); }
+.f-step.cur { color: var(--ink); } .f-step.cur b { background: var(--primary); color: var(--on-primary); }
+.f-step.done { color: var(--ink); } .f-step.done b { background: var(--ok-bg); color: var(--ok-ink); }
+.f-steps-sep { width: 28px; height: 1px; flex: none; background: var(--line-strong); }
+.f-rv { display: grid; grid-template-columns: 18px 132px minmax(0, 1fr) 104px 150px 140px; align-items: center; column-gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line-soft); }
+.f-rv-head { border-top: 0; background: var(--surface-2); font-size: 12px; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--line); }
+.f-rv-head + div > .f-rv:first-child { border-top: 0; }
+
+/* Thème sombre : compatibilité des classes Tailwind encore utilisées */
+html.dark .bg-stone-50 { background-color: #1c1917 !important; }
+html.dark .bg-white { background-color: #292524 !important; }
+html.dark .bg-stone-100 { background-color: #292524 !important; }
+html.dark .bg-stone-200 { background-color: #44403c !important; }
+html.dark .bg-stone-900 { background-color: #f5f5f4 !important; }
+html.dark .text-stone-900 { color: #fafaf9 !important; }
+html.dark .text-stone-700 { color: #e7e5e4 !important; }
+html.dark .text-stone-600 { color: #d6d3d1 !important; }
+html.dark .text-stone-500 { color: #a8a29e !important; }
+html.dark .text-stone-400 { color: #78716c !important; }
+html.dark .text-stone-50 { color: #1c1917 !important; }
+html.dark .border-stone-100 { border-color: #292524 !important; }
+html.dark .border-stone-200 { border-color: #44403c !important; }
+html.dark .border-stone-300 { border-color: #57534e !important; }
+html.dark .text-emerald-700 { color: #6ee7b7 !important; }
+html.dark .text-rose-700 { color: #fca5a5 !important; }
+html.dark .text-amber-700 { color: #fcd34d !important; }
+html.dark .bg-emerald-100 { background-color: rgba(6, 78, 59, 0.4) !important; }
+html.dark .bg-amber-100 { background-color: rgba(120, 53, 15, 0.4) !important; }
+html.dark input, html.dark select, html.dark textarea { color-scheme: dark; }
+
+/* Mode tactile (iPhone, tablettes) : cibles plus grandes, pas de survol collant */
+html[data-touch="1"] *:hover { transition: none !important; }
+html[data-touch="1"] button:not(.no-touch-grow), html[data-touch="1"] a[role="button"]:not(.no-touch-grow) { min-height: 40px; }
+html[data-touch="1"] .f-ibtn { width: 40px; height: 40px; }
+html[data-touch="1"] .f-ibtn-xs { width: 28px; height: 28px; }
+html[data-touch="1"] .f-seg > button { height: 34px; }
+html[data-touch="1"] .f-chip { height: 32px; }
+html[data-touch="1"] input[type="text"], html[data-touch="1"] input[type="number"], html[data-touch="1"] input[type="email"],
+html[data-touch="1"] input[type="password"], html[data-touch="1"] input[type="date"], html[data-touch="1"] input[type="search"],
+html[data-touch="1"] select, html[data-touch="1"] textarea { font-size: 16px !important; }
+html[data-touch="1"] .f-field { height: auto; min-height: 42px; padding-top: 8px; padding-bottom: 8px; }
+html[data-touch="1"] .f-field-sm { min-height: 38px; }
+html[data-touch="1"] .fixed.inset-0.z-50 > .f-modal:not(.max-w-md) {
+  margin: 0 !important; max-width: none !important; max-height: 100dvh !important; height: 100dvh !important;
+  border-radius: 0 !important; border: 0 !important; padding-bottom: env(safe-area-inset-bottom, 0) !important;
+}
+html[data-touch="1"] .fixed.inset-0.z-50:has(> .f-modal:not(.max-w-md)) { padding: 0 !important; }
+html[data-touch="1"] .opacity-0.group-hover\\:opacity-100 { opacity: 0.7 !important; }
+`;
 export default function App() {
   // ===== Gist : récupération initiale du token et de l'id (localStorage avec fallback) =====
   const safeLocalStorage = useMemo(() => {
@@ -5188,7 +5261,7 @@ export default function App() {
     else delete next[nom];
     return next;
   });
-  const [view, setView] = useState('dashboard');
+  const [view, setView] = useState('calendar');
   const [showTxForm, setShowTxForm] = useState(false);
   const [editingTx, setEditingTx] = useState(null);
   const [defaultDate, setDefaultDate] = useState(null);
@@ -5766,419 +5839,280 @@ export default function App() {
     reader.readAsText(file);
   };
 
+  // Créances encore ouvertes (pastille de la navigation)
+  const creancesPending = useMemo(
+    () => transactions.filter(t => isDu(t, affaireCatIds, participationCatIds) && !isDuRegle(t)).length,
+    [transactions, affaireCatIds, participationCatIds]
+  );
+
   const navItems = [
-    { id: 'dashboard', label: 'Tableau de bord', short: 'Accueil', icon: Home },
-    { id: 'times', label: 'Analyses', icon: BarChart3 },
-    { id: 'cats', label: 'Catégories', icon: Tags },
     { id: 'calendar', label: 'Calendrier', icon: CalendarIcon },
-    { id: 'tx', label: 'Transactions', icon: Receipt },
-    { id: 'affaires', label: 'Affaires', icon: Briefcase },
-    { id: 'societe', label: 'Société', icon: Building2 },
-    { id: 'reimb', label: 'Créances', icon: UserIcon },
+    { id: 'tx', label: 'Transactions', icon: ArrowLeftRight },
+    { id: 'times', label: 'Analyses', icon: BarChart3 },
+    { id: 'affaires', label: 'Affaires', icon: Briefcase, group: 'Registres' },
+    { id: 'societe', label: 'Société', icon: Building2, count: societePendingTxs.length },
+    { id: 'reimb', label: 'Créances', icon: UserIcon, count: creancesPending },
   ];
+  const goTo = (id) => { setView(id); window.scrollTo(0, 0); };
+  const openNewTx = () => { setEditingTx(null); setDefaultDate(null); setShowTxForm(true); };
+
+  // État de la synchronisation Gist
+  const syncBusy = syncStatus === 'saving' || syncStatus === 'loading';
+  const syncTitle =
+    syncStatus === 'saving' ? 'Sauvegarde en cours…' :
+    syncStatus === 'loading' ? 'Chargement…' :
+    syncStatus === 'saved' ? `Synchronisé${lastSyncAt ? ' · ' + new Date(lastSyncAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : ''}` :
+    syncStatus === 'error' ? `Erreur : ${syncError}` :
+    'Synchronisation Gist';
+  const syncLabel =
+    syncStatus === 'saving' ? 'Sauvegarde…' :
+    syncStatus === 'loading' ? 'Chargement…' :
+    syncStatus === 'error' ? 'Erreur de synchro' :
+    syncStatus === 'saved' ? 'Synchronisé' : 'Synchronisation';
+  const syncColor = syncStatus === 'error' ? 'var(--neg)' : syncBusy ? 'var(--m-wait-2)' : syncStatus === 'saved' ? 'var(--m-ok)' : 'var(--faint)';
+  const syncTime = syncStatus === 'saved' && lastSyncAt
+    ? new Date(lastSyncAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+    : '';
+  const syncIcon = (size) => syncBusy
+    ? <RefreshCw size={size} className="animate-spin" style={{ color: syncColor }} />
+    : syncStatus === 'error'
+      ? <AlertCircle size={size} style={{ color: syncColor }} />
+      : <span className="f-dot" style={{ background: syncColor }} />;
 
   return (
-    <div className="min-h-screen text-stone-900 dark:text-stone-100" style={{ fontFamily: '"Inter", system-ui, sans-serif', backgroundColor: 'transparent' }}>
+    <div className="f-app min-h-screen" style={{ backgroundColor: bgEnabled ? 'transparent' : 'var(--bg)' }}>
       {/* Background animé — affiché seulement si activé dans les paramètres */}
       {bgEnabled && <ParticleWaveBackground isDark={isDark} />}
 
       {/* Wrapper principal au-dessus du canvas (z-index: 1) */}
       <div style={{ position: 'relative', zIndex: 1 }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap');
-        .font-serif { font-family: 'Fraunces', Georgia, serif; font-optical-sizing: auto; }
-        body, html { font-family: 'Inter', system-ui, sans-serif; background: transparent !important; }
+        <style>{APP_CSS}</style>
 
-        /* ============================================================
-           THÈME SOMBRE — overrides ciblés des classes Tailwind utilisées
-           Plutôt que de réécrire chaque composant avec dark:, on inverse
-           les couleurs neutres globalement quand .dark est sur <html>.
-           ============================================================ */
-
-        html.dark { color-scheme: dark; }
-
-        /* Backgrounds neutres */
-        html.dark .bg-stone-50 { background-color: #1c1917 !important; }
-        html.dark .bg-white { background-color: #292524 !important; }
-        html.dark .bg-stone-100 { background-color: #292524 !important; }
-        html.dark .bg-stone-200 { background-color: #44403c !important; }
-        html.dark .bg-stone-900 { background-color: #f5f5f4 !important; }
-        html.dark .bg-stone-50\\/80 { background-color: rgba(28, 25, 23, 0.8) !important; }
-        html.dark .bg-stone-50\\/40 { background-color: rgba(28, 25, 23, 0.4) !important; }
-        html.dark .bg-white\\/40 { background-color: rgba(41, 37, 36, 0.4) !important; }
-
-        /* Textes */
-        html.dark .text-stone-900 { color: #fafaf9 !important; }
-        html.dark .text-stone-700 { color: #e7e5e4 !important; }
-        html.dark .text-stone-600 { color: #d6d3d1 !important; }
-        html.dark .text-stone-500 { color: #a8a29e !important; }
-        html.dark .text-stone-400 { color: #78716c !important; }
-        html.dark .text-stone-50 { color: #1c1917 !important; }
-
-        /* Bordures */
-        html.dark .border-stone-100 { border-color: #292524 !important; }
-        html.dark .border-stone-200 { border-color: #44403c !important; }
-        html.dark .border-stone-200\\/80 { border-color: rgba(68, 64, 60, 0.8) !important; }
-        html.dark .border-stone-300 { border-color: #57534e !important; }
-        html.dark .border-stone-900 { border-color: #f5f5f4 !important; }
-
-        /* Bouton principal (stone-900) inversé */
-        html.dark .bg-stone-900.text-stone-50 { background-color: #fafaf9 !important; color: #1c1917 !important; }
-        /* Boutons d'état sélectionné avec text-white explicite (Dépense, Société, Proximité) :
-           bg-stone-900 devient blanc en mode sombre, donc on force le texte à devenir sombre. */
-        html.dark .bg-stone-900.text-white { background-color: #fafaf9 !important; color: #1c1917 !important; }
-        /* Bouton Revenu sélectionné : bg-emerald-700 + text-white. On adoucit l'emerald
-           et on garde le texte blanc qui contraste bien sur ce fond plus sombre. */
-        html.dark .bg-emerald-700.text-white { background-color: #047857 !important; color: #f0fdf4 !important; }
-        html.dark .hover\\:bg-stone-800:hover { background-color: #e7e5e4 !important; }
-        html.dark .hover\\:bg-stone-100:hover { background-color: #292524 !important; }
-        html.dark .hover\\:bg-stone-200:hover { background-color: #44403c !important; }
-        html.dark .hover\\:bg-stone-50:hover { background-color: #1c1917 !important; }
-        html.dark .hover\\:bg-white:hover { background-color: #292524 !important; }
-
-        /* Inputs/selects : focus ring */
-        html.dark input, html.dark select, html.dark textarea { color-scheme: dark; }
-
-        /* Hero du dashboard : déjà sombre, mais on adoucit pour ne pas devenir noir profond */
-        html.dark .from-stone-900 { --tw-gradient-from: #292524 var(--tw-gradient-from-position) !important; }
-        html.dark .to-stone-800 { --tw-gradient-to: #1c1917 var(--tw-gradient-to-position) !important; }
-
-        /* Couleurs accent (emerald/amber/rose) : on garde, juste atténué */
-        html.dark .bg-emerald-50 { background-color: rgba(6, 78, 59, 0.3) !important; }
-        html.dark .bg-emerald-50\\/40 { background-color: rgba(6, 78, 59, 0.2) !important; }
-        html.dark .border-emerald-100 { border-color: #065f46 !important; }
-        html.dark .text-emerald-700 { color: #6ee7b7 !important; }
-        html.dark .text-emerald-800 { color: #a7f3d0 !important; }
-        html.dark .bg-emerald-100 { background-color: rgba(6, 78, 59, 0.4) !important; }
-
-        html.dark .bg-amber-50 { background-color: rgba(120, 53, 15, 0.3) !important; }
-        html.dark .bg-amber-50\\/40 { background-color: rgba(120, 53, 15, 0.2) !important; }
-        html.dark .bg-amber-50\\/50 { background-color: rgba(120, 53, 15, 0.25) !important; }
-        html.dark .bg-amber-50\\/60 { background-color: rgba(120, 53, 15, 0.3) !important; }
-        html.dark .border-amber-100 { border-color: #78350f !important; }
-        html.dark .border-amber-200\\/70 { border-color: rgba(180, 83, 9, 0.5) !important; }
-        html.dark .text-amber-700 { color: #fcd34d !important; }
-        html.dark .text-amber-800 { color: #fde68a !important; }
-        html.dark .bg-amber-100 { background-color: rgba(120, 53, 15, 0.4) !important; }
-
-        html.dark .bg-rose-50 { background-color: rgba(127, 29, 29, 0.3) !important; }
-        html.dark .border-rose-100 { border-color: #7f1d1d !important; }
-        html.dark .text-rose-700 { color: #fca5a5 !important; }
-        html.dark .text-rose-600 { color: #fca5a5 !important; }
-        html.dark .hover\\:bg-rose-100:hover { background-color: rgba(127, 29, 29, 0.5) !important; }
-
-        /* Modale : overlay légèrement plus opaque */
-        html.dark .bg-stone-900\\/40 { background-color: rgba(0, 0, 0, 0.6) !important; }
-
-        /* ============================================================
-           HERO DU DASHBOARD — Forcer les couleurs en mode sombre
-           Le hero a un fond sombre dans les deux modes (déjà foncé en clair,
-           juste un peu plus doux en sombre). Il faut donc préserver les
-           textes clairs (stone-50/stone-400) qui seraient sinon inversés.
-           ============================================================ */
-        html.dark .dashboard-hero { background: linear-gradient(to bottom right, #292524, #1c1917) !important; color: #fafaf9 !important; border-color: #44403c !important; }
-        html.dark .dashboard-hero .text-stone-50 { color: #fafaf9 !important; }
-        html.dark .dashboard-hero .text-stone-400 { color: #a8a29e !important; }
-        html.dark .dashboard-hero .text-emerald-300 { color: #6ee7b7 !important; }
-        html.dark .dashboard-hero .text-rose-300 { color: #fda4af !important; }
-
-        /* ============================================================
-           MODE TACTILE — adaptations pour iPhone et tablettes tactiles
-           Activé par data-touch="1" sur <html> via JS.
-           Objectifs : zones de tap plus grandes, suppression des hover,
-           sticky bottom bar pour les actions principales sur mobile.
-           ============================================================ */
-
-        html[data-touch="1"] {
-          /* Désactive complètement les hover : sur tactile, ils s'appliquent
-             au dernier tap et restent collés, donnant une UI bizarre. */
-          --hover-disabled: 1;
-        }
-        html[data-touch="1"] *:hover { transition: none !important; }
-
-        /* Zone de tap minimum 44px (recommandation Apple HIG) */
-        html[data-touch="1"] button:not(.no-touch-grow),
-        html[data-touch="1"] a[role="button"]:not(.no-touch-grow) {
-          min-height: 40px;
-        }
-
-        /* Inputs plus confortables au doigt */
-        html[data-touch="1"] input[type="text"],
-        html[data-touch="1"] input[type="number"],
-        html[data-touch="1"] input[type="email"],
-        html[data-touch="1"] input[type="password"],
-        html[data-touch="1"] input[type="date"],
-        html[data-touch="1"] select,
-        html[data-touch="1"] textarea {
-          font-size: 16px !important; /* évite le zoom auto iOS */
-          padding-top: 0.625rem !important;
-          padding-bottom: 0.625rem !important;
-        }
-
-        /* Modales : occupent toute la hauteur disponible sur petit écran,
-           avec safe area iOS en bas (encoche) */
-        html[data-touch="1"] .fixed.inset-0.z-50 > div {
-          margin: 0 !important;
-          max-height: 100vh !important;
-          height: 100vh !important;
-          border-radius: 0 !important;
-          padding-bottom: env(safe-area-inset-bottom, 0) !important;
-        }
-
-        /* Boutons d'action visibles sur l'écran principal : actions toujours
-           accessibles même sans scroller. Les boutons "+", "Importer" etc. */
-        html[data-touch="1"] .group:hover .group-hover\\:opacity-100 {
-          opacity: 1 !important;
-        }
-        html[data-touch="1"] .opacity-0.group-hover\\:opacity-100 {
-          opacity: 0.7 !important;
-        }
-
-        /* Cartes du dashboard : un peu plus de respiration sur mobile */
-        html[data-touch="1"] .gap-3 { gap: 0.625rem !important; }
-
-        /* ============================================================
-           RUBRIQUES — grands onglets sur leur propre ligne.
-           Mobile : deux rangées de 4, icône au-dessus du libellé.
-           Tablette : une rangée, icône au-dessus. Ordinateur : icône + libellé.
-           ============================================================ */
-        .app-top { position: sticky; top: 0; z-index: 30; }
-        .nav-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
-        .nav-tab {
-          flex: 1 1 22%; min-width: 0;
-          display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
-          padding: 8px 4px; border-radius: 14px;
-          font-size: 12.5px; font-weight: 600; line-height: 1.1; white-space: nowrap;
-        }
-        .nav-tab svg { flex-shrink: 0; }
-        .nav-full { display: none; }
-        @media (min-width: 768px) {
-          .nav-tabs { flex-wrap: nowrap; gap: 8px; }
-          .nav-tab { flex: 1 1 auto; padding: 11px 10px; font-size: 13.5px; }
-          .nav-short { display: none; }
-          .nav-full { display: inline; }
-        }
-        @media (min-width: 1100px) {
-          .nav-tab { flex-direction: row; gap: 10px; padding: 15px 14px; font-size: 16.5px; border-radius: 16px; }
-        }
-
-        /* ============================================================
-           CALENDRIER — grille à hauteur libre : chaque case grandit pour
-           afficher toutes les transactions du jour.
-           Mobile : 7 colonnes, montants seuls. Ordinateur : libellés +
-           montants, et une 8e colonne de sous-total par semaine.
-           ============================================================ */
-        .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; align-items: stretch; }
-        .cal-cell { min-height: 58px; min-width: 0; }
-        .cal-chip { transition: opacity 150ms; }
-        .cal-legend { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
-        .cal-legend::-webkit-scrollbar { display: none; }
-        .cal-legend > * { flex-shrink: 0; }
-        .cal-week-cell { display: none; }
-        .cal-desktop { display: none; }
-        .cal-mobile { display: block; }
-        @media (min-width: 768px) {
-          .cal-grid { grid-template-columns: repeat(7, minmax(0, 1fr)) 84px; gap: 6px; }
-          .cal-cell { min-height: 104px; }
-          .cal-legend { flex-wrap: wrap; overflow-x: visible; }
-          .cal-week-cell { display: flex; }
-          .cal-desktop { display: block; }
-          .cal-mobile { display: none; }
-        }
-      `}</style>
-
-      {/* Bandeau fixe : barre du haut + rubriques, qui suivent ensemble au défilement */}
-      <div className="app-top bg-stone-50/80 backdrop-blur-md border-b border-stone-200/80">
-      <header>
-        <div className="max-w-7xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center gap-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-stone-900 rounded-lg flex items-center justify-center">
-              <Wallet className="text-stone-50" size={18} />
+        <div className="f-shell">
+          {/* Barre latérale (ordinateur) */}
+          <aside className="f-side" aria-label="Navigation principale">
+            <div className="flex items-center gap-2.5 px-2 py-1">
+              <span className="f-logo"><Wallet size={14} /></span>
+              <span className="text-[14px] font-semibold t-ink">Finances</span>
             </div>
-            <div>
-              <h1 className="font-serif text-lg leading-none text-stone-900">Finances</h1>
-              <p className="text-[10px] uppercase tracking-widest text-stone-500 mt-0.5 whitespace-nowrap">Gestion personnelle</p>
-            </div>
-          </div>
 
-          <div className="ml-auto flex items-center gap-2">
-            {isGistConnected && (
-              <button
-                onClick={() => setShowSettings(true)}
-                title={
-                  syncStatus === 'saving' ? 'Sauvegarde en cours…' :
-                  syncStatus === 'loading' ? 'Chargement…' :
-                  syncStatus === 'saved' ? `Synchronisé${lastSyncAt ? ' · ' + new Date(lastSyncAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : ''}` :
-                  syncStatus === 'error' ? `Erreur : ${syncError}` :
-                  'Synchronisation Gist'
-                }
-                className={`inline-flex items-center justify-center w-9 h-9 rounded-lg border transition shadow-sm ${
-                  syncStatus === 'error' ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100' :
-                  syncStatus === 'saving' || syncStatus === 'loading' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                  'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                }`}
+            <div className="flex gap-1.5">
+              <Button className="flex-1" onClick={openNewTx}>
+                <Plus size={15} /> Nouvelle transaction
+              </Button>
+              <Button
+                variant="secondary"
+                className="f-btn-icon"
+                onClick={() => setShowImport(true)}
+                title="Importer un document"
+                aria-label="Importer un document"
               >
-                {syncStatus === 'saving' || syncStatus === 'loading' ? (
-                  <RefreshCw size={15} className="animate-spin" />
-                ) : syncStatus === 'error' ? (
-                  <AlertCircle size={15} />
-                ) : (
-                  <Cloud size={15} />
-                )}
+                <Upload size={15} />
+              </Button>
+            </div>
+
+            <nav className="flex flex-col gap-0.5" aria-label="Rubriques">
+              {navItems.map(item => {
+                const Icon = item.icon;
+                const isActive = view === item.id;
+                return (
+                  <React.Fragment key={item.id}>
+                    {item.group && <span className="f-nav-g">{item.group}</span>}
+                    <button
+                      type="button"
+                      onClick={() => goTo(item.id)}
+                      aria-current={isActive ? 'page' : undefined}
+                      className={`f-nav no-touch-grow ${isActive ? 'on' : ''}`}
+                    >
+                      <Icon size={16} strokeWidth={isActive ? 2.1 : 1.8} />
+                      {item.label}
+                      {item.count > 0 && <span className="ct">{item.count}</span>}
+                    </button>
+                  </React.Fragment>
+                );
+              })}
+            </nav>
+
+            <div className="mt-auto flex flex-col gap-0.5">
+              {isGistConnected && (
+                <button
+                  type="button"
+                  onClick={() => setShowSettings(true)}
+                  title={syncTitle}
+                  className="f-nav f-nav-sync no-touch-grow"
+                >
+                  <span className="w-4 flex justify-center">{syncIcon(13)}</span>
+                  <span className="truncate" style={syncStatus === 'error' ? { color: 'var(--neg)' } : undefined}>{syncLabel}</span>
+                  {syncTime && <span className="ct">{syncTime}</span>}
+                </button>
+              )}
+              <button type="button" onClick={() => setShowSettings(true)} className="f-nav no-touch-grow">
+                <SlidersHorizontal size={16} strokeWidth={1.8} />
+                Paramètres
               </button>
-            )}
-            <button
-              onClick={() => setShowSettings(true)}
-              title="Paramètres"
-              className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 transition shadow-sm"
-            >
-              <Settings size={15} />
-            </button>
-            <Button variant="outline" size="sm" onClick={() => setShowImport(true)} title="Importer un document" className="whitespace-nowrap">
-              <Upload size={14} /> <span className="hidden sm:inline">Importer</span>
-            </Button>
-            <Button size="sm" onClick={() => { setEditingTx(null); setDefaultDate(null); setShowTxForm(true); }}>
-              <Plus size={14} /> <span className="hidden sm:inline">Ajouter</span>
-            </Button>
+            </div>
+          </aside>
+
+          <div className="flex-1 min-w-0 flex flex-col">
+            {/* Barre du haut (mobile et tablette) */}
+            <header className="f-topbar">
+              <span className="f-logo"><Wallet size={14} /></span>
+              <span className="text-[15px] font-semibold t-ink">Finances</span>
+              <div className="ml-auto flex items-center gap-0.5">
+                {isGistConnected && (
+                  <IconButton label={syncTitle} onClick={() => setShowSettings(true)} className="f-ibtn-lg">
+                    {syncIcon(17)}
+                  </IconButton>
+                )}
+                <IconButton label="Paramètres" onClick={() => setShowSettings(true)} className="f-ibtn-lg">
+                  <SlidersHorizontal size={18} />
+                </IconButton>
+                <IconButton label="Importer un document" onClick={() => setShowImport(true)} className="f-ibtn-lg">
+                  <Upload size={18} />
+                </IconButton>
+                <IconButton label="Ajouter une transaction" onClick={openNewTx} className="f-ibtn-lg f-add">
+                  <Plus size={19} />
+                </IconButton>
+              </div>
+            </header>
+
+            {/* Contenu */}
+            <main className="f-main">
+              <div className="max-w-[1180px] mx-auto">
+                {view === 'times' && <TimeViews transactions={visibleTransactions} categories={categories} isDark={isDark} />}
+                {view === 'calendar' && <CalendarView transactions={visibleTransactions} categories={categories} onAddTx={(date) => { setEditingTx(null); setDefaultDate(date); setShowTxForm(true); }} onEdit={startEdit} onDelete={deleteTransaction} />}
+                {view === 'tx' && <TransactionsList transactions={visibleTransactions} categories={categories} onEdit={startEdit} onDelete={deleteTransaction} />}
+                {view === 'affaires' && <AffairesView transactions={transactions} categories={categories} affaireCatIds={affaireCatIds} projetsMeta={projetsMeta} onSetTauxMarge={setTauxMarge} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={openAffaireForm} />}
+                {view === 'societe' && <ReimbursableView key="societe" scope="societe" transactions={transactions} categories={categories} participationCatIds={participationCatIds} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={() => openRegistreForm('societe')} onAddParticipation={openParticipationForm} />}
+                {view === 'reimb' && <ReimbursableView key="proximite" scope="proximite" transactions={transactions} categories={categories} affaireCatIds={affaireCatIds} participationCatIds={participationCatIds} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={() => openRegistreForm('proximite')} />}
+              </div>
+            </main>
           </div>
         </div>
 
-      </header>
-
-      {/* Rubriques : grands onglets avec libellé, toujours visibles */}
-      <nav className="app-nav">
-        <div className="nav-tabs max-w-7xl mx-auto px-3 md:px-6 pt-1 pb-2.5">
+        {/* Navigation du bas (mobile et tablette) */}
+        <nav className="f-bottom" aria-label="Rubriques">
           {navItems.map(item => {
             const Icon = item.icon;
             const isActive = view === item.id;
             return (
               <button
                 key={item.id}
-                onClick={() => setView(item.id)}
+                type="button"
+                onClick={() => goTo(item.id)}
                 aria-label={item.label}
+                title={item.label}
                 aria-current={isActive ? 'page' : undefined}
-                className={`nav-tab transition ${
-                  isActive
-                    ? 'bg-stone-900 text-stone-50'
-                    : 'text-stone-600 hover:bg-stone-100 hover:text-stone-900'
-                }`}
+                className={`f-tb no-touch-grow ${isActive ? 'on' : ''}`}
               >
-                <Icon size={22} strokeWidth={isActive ? 2.2 : 1.8} />
-                <span className="nav-short">{item.short || item.label}</span>
-                <span className="nav-full">{item.label}</span>
+                <Icon size={20} strokeWidth={isActive ? 2.1 : 1.8} />
+                <span>{item.label}</span>
               </button>
             );
           })}
-        </div>
-      </nav>
-      </div>
+        </nav>
 
-      {/* Contenu */}
-      <main className="max-w-7xl mx-auto px-4 md:px-6 py-6">
-        {view === 'dashboard' && <Dashboard transactions={visibleTransactions} categories={categories} allTransactions={personalTransactions} societePending={societePending} societeCount={societePendingTxs.length} onOpenSociete={() => setView('societe')} affaireCatIds={affaireCatIds} participationCatIds={participationCatIds} />}
-        {view === 'times' && <TimeViews transactions={visibleTransactions} categories={categories} />}
-        {view === 'cats' && <CategoriesPage transactions={visibleTransactions} allTransactions={transactions} categories={categories} onCategoriesChange={setCategories} />}
-        {view === 'calendar' && <CalendarView transactions={visibleTransactions} categories={categories} onAddTx={(date) => { setDefaultDate(date); setShowTxForm(true); }} onEdit={startEdit} onDelete={deleteTransaction} />}
-        {view === 'tx' && <TransactionsList transactions={visibleTransactions} categories={categories} onEdit={startEdit} onDelete={deleteTransaction} />}
-        {view === 'affaires' && <AffairesView transactions={transactions} categories={categories} affaireCatIds={affaireCatIds} projetsMeta={projetsMeta} onSetTauxMarge={setTauxMarge} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={openAffaireForm} />}
-        {view === 'societe' && <ReimbursableView key="societe" scope="societe" transactions={transactions} categories={categories} participationCatIds={participationCatIds} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={() => openRegistreForm('societe')} onAddParticipation={openParticipationForm} />}
-        {view === 'reimb' && <ReimbursableView key="proximite" scope="proximite" transactions={transactions} categories={categories} affaireCatIds={affaireCatIds} participationCatIds={participationCatIds} onUpdate={updateTransaction} onEdit={startEdit} onDelete={deleteTransaction} onAdd={() => openRegistreForm('proximite')} />}
-      </main>
-
-      {/* Input file invisible : déclenché par le bouton "Importer" dans la modale Paramètres */}
-      <input
-        ref={importJsonRef}
-        type="file"
-        accept="application/json"
-        className="hidden"
-        onChange={(e) => { if (e.target.files[0]) importData(e.target.files[0]); e.target.value = ''; }}
-      />
-
-      {/* Modale formulaire transaction */}
-      <Modal
-        open={showTxForm}
-        onClose={() => { setShowTxForm(false); setEditingTx(null); setDefaultDate(null); setPrefillTx(null); }}
-        title={
-          editingTx ? 'Modifier la transaction'
-            : (!prefillTx || (!prefillTx.libelle && !prefillTx.remboursable)) ? 'Nouvelle transaction'
-            : (prefillTx.remboursable && !prefillTx.libelle)
-              ? (prefillTx.remboursableType === 'proximite' ? 'Nouvelle créance' : 'Nouveau frais de société')
-              : 'Nouvelle transaction (pré-remplie)'
-        }
-      >
-        <TransactionForm
-          initial={editingTx || prefillTx}
-          categories={categories}
-          personnes={personnes}
-          projets={projets}
-          acheteurs={acheteurs}
-          defaultDate={defaultDate}
-          onSave={(tx) => {
-            // Si on est en mode pré-remplissage URL, l'objet "initial" qu'on a passé
-            // a un id qu'on garde, mais ce n'est pas une édition existante : on ajoute.
-            if (prefillTx && !editingTx) {
-              setTransactions(prev => [...prev, tx]);
-              setShowTxForm(false);
-              setPrefillTx(null);
-              setDefaultDate(null);
-            } else {
-              addTransaction(tx);
-            }
-          }}
-          onCancel={() => { setShowTxForm(false); setEditingTx(null); setDefaultDate(null); setPrefillTx(null); }}
+        {/* Input file invisible : déclenché par le bouton "Importer" dans la modale Paramètres */}
+        <input
+          ref={importJsonRef}
+          type="file"
+          accept="application/json"
+          className="hidden"
+          onChange={(e) => { if (e.target.files[0]) importData(e.target.files[0]); e.target.value = ''; }}
         />
-      </Modal>
 
-      {/* Modale confirmation de suppression */}
-      <Modal
-        open={!!confirmDeleteId}
-        onClose={() => setConfirmDeleteId(null)}
-        title="Supprimer la transaction"
-        size="sm"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-stone-700">
-            Êtes-vous sûr de vouloir supprimer cette transaction ? Cette action est irréversible.
+        {/* Modale formulaire transaction */}
+        <Modal
+          open={showTxForm}
+          onClose={() => { setShowTxForm(false); setEditingTx(null); setDefaultDate(null); setPrefillTx(null); }}
+          title={
+            editingTx ? 'Modifier la transaction'
+              : (!prefillTx || (!prefillTx.libelle && !prefillTx.remboursable)) ? 'Nouvelle transaction'
+              : (prefillTx.remboursable && !prefillTx.libelle)
+                ? (prefillTx.remboursableType === 'proximite' ? 'Nouvelle créance' : 'Nouveau frais de société')
+                : 'Nouvelle transaction (pré-remplie)'
+          }
+        >
+          <TransactionForm
+            initial={editingTx || prefillTx}
+            categories={categories}
+            personnes={personnes}
+            projets={projets}
+            acheteurs={acheteurs}
+            defaultDate={defaultDate}
+            onSave={(tx) => {
+              // Si on est en mode pré-remplissage URL, l'objet "initial" qu'on a passé
+              // a un id qu'on garde, mais ce n'est pas une édition existante : on ajoute.
+              if (prefillTx && !editingTx) {
+                setTransactions(prev => [...prev, tx]);
+                setShowTxForm(false);
+                setPrefillTx(null);
+                setDefaultDate(null);
+              } else {
+                addTransaction(tx);
+              }
+            }}
+            onCancel={() => { setShowTxForm(false); setEditingTx(null); setDefaultDate(null); setPrefillTx(null); }}
+          />
+        </Modal>
+
+        {/* Modale confirmation de suppression */}
+        <Modal
+          open={!!confirmDeleteId}
+          onClose={() => setConfirmDeleteId(null)}
+          title="Supprimer la transaction"
+          size="sm"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setConfirmDeleteId(null)}>Annuler</Button>
+              <Button variant="danger" onClick={performDelete}>Supprimer</Button>
+            </>
+          }
+        >
+          <p className="t-ink2">
+            {(() => {
+              const cible = transactions.find(t => t.id === confirmDeleteId);
+              return cible ? `Supprimer « ${cible.libelle} » ? ` : 'Supprimer cette transaction ? ';
+            })()}
+            Cette action est irréversible.
           </p>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setConfirmDeleteId(null)} className="flex-1">Annuler</Button>
-            <Button onClick={performDelete} className="flex-1 !bg-rose-600 hover:!bg-rose-700">Supprimer</Button>
-          </div>
-        </div>
-      </Modal>
+        </Modal>
 
-      {/* Modale Paramètres */}
-      <SettingsModal
-        open={showSettings}
-        onClose={() => setShowSettings(false)}
-        gistToken={gistToken}
-        gistId={gistId}
-        gistUser={gistUser}
-        isConnected={isGistConnected}
-        syncStatus={syncStatus}
-        syncError={syncError}
-        lastSyncAt={lastSyncAt}
-        onConnect={connectGist}
-        onDisconnect={disconnectGist}
-        onForceSync={forceSyncFromGist}
-        themePref={themePref}
-        onThemeChange={setThemePref}
-        bgEnabled={bgEnabled}
-        onBgToggle={() => setBgEnabled(v => !v)}
-        isMobileTouch={isMobileTouch}
-        onExport={exportData}
-        onImportClick={() => importJsonRef.current?.click()}
-        txCount={transactions.length}
-        catCount={categories.length}
-      />
+        {/* Modale Paramètres */}
+        <SettingsModal
+          open={showSettings}
+          onClose={() => setShowSettings(false)}
+          gistToken={gistToken}
+          gistId={gistId}
+          gistUser={gistUser}
+          isConnected={isGistConnected}
+          syncStatus={syncStatus}
+          syncError={syncError}
+          lastSyncAt={lastSyncAt}
+          onConnect={connectGist}
+          onDisconnect={disconnectGist}
+          onForceSync={forceSyncFromGist}
+          themePref={themePref}
+          onThemeChange={setThemePref}
+          bgEnabled={bgEnabled}
+          onBgToggle={() => setBgEnabled(v => !v)}
+          isMobileTouch={isMobileTouch}
+          onExport={exportData}
+          onImportClick={() => importJsonRef.current?.click()}
+          txCount={transactions.length}
+          catCount={categories.length}
+          categories={categories}
+          allTransactions={transactions}
+          onCategoriesChange={setCategories}
+        />
 
-      {/* Modale import OCR */}
-      <ImportModal
-        open={showImport}
-        onClose={() => setShowImport(false)}
-        onImport={importBatch}
-        categories={categories}
-      />
+        {/* Modale import OCR */}
+        <ImportModal
+          open={showImport}
+          onClose={() => setShowImport(false)}
+          onImport={importBatch}
+          categories={categories}
+        />
       </div> {/* fin wrapper z-index:1 */}
     </div>
   );
