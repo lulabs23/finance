@@ -1,15 +1,54 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   Wallet, TrendingUp, TrendingDown, Calendar as CalendarIcon, Upload, Download,
-  Plus, Trash2, Edit2, X, Check, ChevronLeft, ChevronRight, ChevronDown, FileText, Image as ImageIcon,
+  Plus, Trash2, Edit2, X, Check, ChevronLeft, ChevronRight, FileText, Image as ImageIcon,
   Tags, RefreshCw, Receipt, AlertCircle, Search, Home, BarChart3, Clock, FolderOpen,
   CheckCircle2, Circle, Settings, Eye, EyeOff, Building2, User as UserIcon, Pencil, Cloud, Paperclip,
-  Briefcase, ArrowLeftRight, SlidersHorizontal
+  Briefcase
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
+
+// Icônes dessinées localement (indépendantes de la version de lucide-react)
+const Svg = ({ size = 24, strokeWidth = 2, className, style, children }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"
+    className={className} style={style} aria-hidden="true">{children}</svg>
+);
+const ChevronDown = (p) => <Svg {...p}><path d="m6 9 6 6 6-6" /></Svg>;
+const ArrowLeftRight = (p) => <Svg {...p}><path d="M8 3 4 7l4 4" /><path d="M4 7h16" /><path d="m16 21 4-4-4-4" /><path d="M20 17H4" /></Svg>;
+const SlidersHorizontal = (p) => (
+  <Svg {...p}>
+    <line x1="21" x2="14" y1="4" y2="4" /><line x1="10" x2="3" y1="4" y2="4" />
+    <line x1="21" x2="12" y1="12" y2="12" /><line x1="8" x2="3" y1="12" y2="12" />
+    <line x1="21" x2="16" y1="20" y2="20" /><line x1="12" x2="3" y1="20" y2="20" />
+    <line x1="14" x2="14" y1="2" y2="6" /><line x1="8" x2="8" y1="10" y2="14" /><line x1="16" x2="16" y1="18" y2="22" />
+  </Svg>
+);
+
+// Affiche l'erreur au lieu d'un écran blanc
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (!this.state.error) return this.props.children;
+    const e = this.state.error;
+    return (
+      <div style={{ padding: 24, fontFamily: 'system-ui, sans-serif', color: '#1c1917' }}>
+        <h1 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Erreur d'affichage</h1>
+        <pre style={{ whiteSpace: 'pre-wrap', fontSize: 13, background: '#f5f5f4', padding: 12, borderRadius: 6 }}>
+          {String((e && (e.stack || e.message)) || e)}
+        </pre>
+        <button onClick={() => window.location.reload()}
+          style={{ marginTop: 12, padding: '8px 14px', border: '1px solid #d6d3d1', borderRadius: 6, background: '#fff', cursor: 'pointer' }}>
+          Recharger
+        </button>
+      </div>
+    );
+  }
+}
 
 // ============================================================
 // UTILITAIRES
@@ -5230,7 +5269,7 @@ html[data-touch="1"] .fixed.inset-0.z-50 > .f-modal:not(.max-w-md) {
 html[data-touch="1"] .fixed.inset-0.z-50:has(> .f-modal:not(.max-w-md)) { padding: 0 !important; }
 html[data-touch="1"] .opacity-0.group-hover\\:opacity-100 { opacity: 0.7 !important; }
 `;
-export default function App() {
+function AppInner() {
   // ===== Gist : récupération initiale du token et de l'id (localStorage avec fallback) =====
   const safeLocalStorage = useMemo(() => {
     try {
@@ -6115,5 +6154,13 @@ export default function App() {
         />
       </div> {/* fin wrapper z-index:1 */}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
   );
 }
