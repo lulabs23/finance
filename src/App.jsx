@@ -1292,7 +1292,7 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
                 onClick={() => setTx(societe ? off : { ...tx, remboursable: true, remboursableType: 'societe' })}
                 className={`f-toggle ${societe ? 'on' : ''}`}
               >
-                <Building2 size={15} /> <span className="hidden sm:inline">Frais de société</span><span className="sm:hidden">Société</span>
+                <Building2 size={15} /> Société
               </button>
               <button
                 type="button"
@@ -1308,7 +1308,7 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
                 onClick={() => { setTx({ ...tx, etalOn: !tx.etalOn }); setEtalErreur(false); }}
                 className={`f-toggle ${tx.etalOn ? 'on' : ''}`}
               >
-                <RefreshCw size={15} /> Étaler
+                <RefreshCw size={15} /> Amortissement
               </button>
             </div>
 
@@ -1382,7 +1382,7 @@ const TransactionForm = ({ initial, categories, onSave, onCancel, defaultDate, p
                     />
                     <Seg
                       fill
-                      label="Fin de l'étalement"
+                      label="Fin de l'amortissement"
                       value={tx.etalFin === 'date' ? 'date' : 'nombre'}
                       onChange={(v) => maj({ etalFin: v })}
                       options={[{ id: 'nombre', label: 'Nombre' }, { id: 'date', label: 'Jusqu’au' }]}
@@ -3118,11 +3118,6 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], partic
   return (
     <div className="flex flex-col gap-4">
       <PageHeader title={L.titre}>
-        {!duScope && (
-          <Button variant="secondary" onClick={() => onAddParticipation && onAddParticipation()}>
-            <Plus size={15} /> Participation
-          </Button>
-        )}
         <Button variant="secondary" onClick={openInvoice} disabled={docItems.length === 0}>
           <FileText size={15} /> {L.doc}
         </Button>
@@ -3190,7 +3185,6 @@ const ReimbursableView = ({ transactions, categories, affaireCatIds = [], partic
                       </div>
                       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs t-muted min-w-0">
                         <span className="f-num">{formatDateFR(t.date)}</span>
-                        {isPart(t) && <span className="font-medium t-ink2">Participation</span>}
                         {duScope && debiteurDe(t) && <span className="font-medium t-ink2">{debiteurDe(t)}</span>}
                         {!regle(t) && recuPart(t) > 0 && (
                           <span className="f-num t-warn">reçu {formatEUR(recuPart(t))} · reste {formatEUR(reste(t))}</span>
@@ -4316,12 +4310,20 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
   const [filterCat, setFilterCat] = useState('all');
   const [filterType, setFilterType] = useState('all');
   const [viewingJustif, setViewingJustif] = useState(null);
+  const [pastOnly, setPastOnly] = useState(() => {
+    try { return window.localStorage.getItem('finances_tx_past') === '1'; } catch (e) { return false; }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem('finances_tx_past', pastOnly ? '1' : '0'); } catch (e) { /* stockage indisponible */ }
+  }, [pastOnly]);
+  const todayIso = toISODate(new Date());
 
   const getCatColor = (id) => categories.find(c => c.id === id)?.color || '#9c9c9c';
   const getCatName = (id) => categories.find(c => c.id === id)?.name || 'Inconnue';
 
   const filtered = transactions
     .filter(t => {
+      if (pastOnly && (t.date || '') > todayIso) return false;
       if (filterType !== 'all' && t.type !== filterType) return false;
       if (filterCat !== 'all' && !getCatIds(t).includes(filterCat)) return false;
       if (search && !t.libelle.toLowerCase().includes(search.toLowerCase())) return false;
@@ -4364,6 +4366,12 @@ const TransactionsList = ({ transactions, categories, onEdit, onDelete }) => {
             <option value="all">Toutes catégories</option>
             {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
+          <Seg
+            label="Période"
+            value={pastOnly ? 'past' : 'all'}
+            onChange={(v) => setPastOnly(v === 'past')}
+            options={[{ id: 'all', label: 'Toutes' }, { id: 'past', label: 'Passées' }]}
+          />
         </div>
 
         {filtered.length === 0 ? (
