@@ -28,6 +28,17 @@ const SlidersHorizontal = (p) => (
   </Svg>
 );
 
+// Logo « compte en T » : débit (vert) à gauche, crédit à droite
+const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="#1c1917"/><path d="M14 20h36M32 20v27" stroke="#fafaf9" stroke-width="6" stroke-linecap="round" fill="none"/><path d="M16 31h10M16 39h6" stroke="#6ee7b7" stroke-width="4.5" stroke-linecap="round"/><path d="M38 31h10M42 39h6" stroke="#a8a29e" stroke-width="4.5" stroke-linecap="round"/></svg>';
+const LogoMark = ({ size = 26, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 64 64" className={`f-logo ${className}`} aria-hidden="true">
+    <rect width="64" height="64" rx="15" fill="#1c1917" />
+    <path d="M14 20h36M32 20v27" stroke="#fafaf9" strokeWidth="6" strokeLinecap="round" fill="none" />
+    <path d="M16 31h10M16 39h6" stroke="#6ee7b7" strokeWidth="4.5" strokeLinecap="round" />
+    <path d="M38 31h10M42 39h6" stroke="#a8a29e" strokeWidth="4.5" strokeLinecap="round" />
+  </svg>
+);
+
 // Affiche l'erreur au lieu d'un écran blanc
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null }; }
@@ -1878,6 +1889,36 @@ const TimeViews = ({ transactions, categories, isDark = false }) => {
   const [customStart, setCustomStart] = useState(toISODate(addMonths(new Date(), -3)));
   const [customEnd, setCustomEnd] = useState(toISODate(new Date()));
 
+  // Mois analysé (vue « Mois ») : clé « AAAA-MM »
+  const currentMonthKey = toISODate(new Date()).slice(0, 7);
+  const [monthKey, setMonthKey] = useState(currentMonthKey);
+  // Mois disponibles : du plus ancien mouvement au plus lointain (au moins le mois en cours)
+  const monthList = useMemo(() => {
+    let min = currentMonthKey, max = currentMonthKey;
+    transactions.forEach(t => {
+      const k = String(t.date || '').slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(k)) return;
+      if (k < min) min = k;
+      if (k > max) max = k;
+    });
+    const out = [];
+    let [y, m] = min.split('-').map(Number);
+    for (let i = 0; i < 1200; i++) {
+      const k = `${y}-${String(m).padStart(2, '0')}`;
+      out.push(k);
+      if (k >= max) break;
+      m += 1;
+      if (m > 12) { m = 1; y += 1; }
+    }
+    return out;
+  }, [transactions, currentMonthKey]);
+  const monthIdx = monthList.indexOf(monthKey);
+  const stepMonth = (delta) => {
+    const i = monthIdx + delta;
+    if (i >= 0 && i < monthList.length) setMonthKey(monthList[i]);
+  };
+  const openMonth = (key) => { setMonthKey(key); setPeriod('month'); };
+
   const getCatColor = (id) => categories.find(c => c.id === id)?.color || '#9c9c9c';
   const getCatName = (id) => categories.find(c => c.id === id)?.name || 'Inconnue';
 
@@ -1886,7 +1927,13 @@ const TimeViews = ({ transactions, categories, isDark = false }) => {
     const today = startOfDay(new Date());
     const tomorrow = addDays(today, 1);
     if (period === 'weeks') return { start: addDays(today, -27), end: tomorrow, label: '4 dernières semaines' };
-    if (period === 'month') return { start: startOfMonth(today), end: tomorrow, label: 'Ce mois' };
+    if (period === 'month') {
+      const [y, m] = monthKey.split('-').map(Number);
+      const s = new Date(y, m - 1, 1);
+      const e = new Date(y, m, 1);
+      // Mois en cours : jusqu'à aujourd'hui inclus
+      return { start: s, end: monthKey === currentMonthKey ? tomorrow : e, label: libelleMois(monthKey) };
+    }
     if (period === 'quarter') return { start: addDays(today, -89), end: tomorrow, label: '3 derniers mois' };
     if (period === 'year') return { start: startOfMonth(addMonths(today, -11)), end: tomorrow, label: '12 derniers mois' };
     if (period === 'custom') {
@@ -1898,7 +1945,7 @@ const TimeViews = ({ transactions, categories, isDark = false }) => {
     const dates = transactions.map(t => new Date(t.date)).filter(d => !isNaN(d));
     const min = dates.length ? new Date(Math.min(...dates)) : addMonths(today, -12);
     return { start: startOfDay(min), end: tomorrow, label: 'Tout l\'historique' };
-  }, [period, customStart, customEnd, transactions]);
+  }, [period, customStart, customEnd, transactions, monthKey, currentMonthKey]);
 
   // ===== Filtrage de la période =====
   const inRange = (t) => {
@@ -1915,10 +1962,27 @@ const TimeViews = ({ transactions, categories, isDark = false }) => {
   const solde = totalRevenus - totalDepenses;
 
   // ===== Période précédente (même durée, juste avant) pour comparatif =====
+  // Vue « Mois » : même période du mois précédent
   const prevRange = useMemo(() => {
+    if (period === 'month') {
+      const start = addMonths(range.start, -1);
+      const shifted = addMonths(range.end, -1);
+      return { start, end: shifted < range.start ? shifted : range.start };
+    }
     const durationMs = range.end - range.start;
     return { start: new Date(range.start - durationMs), end: range.start };
-  }, [range]);
+  }, [range, period]);
+  const prevLabel = (() => {
+    if (period !== 'month') return 'sur la période précédente';
+    const p = prevRange.start;
+    const nom = MOIS_LONGS[p.getMonth()].toLowerCase();
+    const an = p.getFullYear() !== range.start.getFullYear() ? ` ${p.getFullYear()}` : '';
+    if (monthKey === currentMonthKey) {
+      const dernier = addDays(prevRange.end, -1).getDate();
+      return `du 1er au ${dernier} ${nom}${an}`;
+    }
+    return `en ${nom}${an}`;
+  })();
 
   const prevTxs = useMemo(() => transactions.filter(t => {
     const d = new Date(t.date);
@@ -1985,6 +2049,9 @@ const TimeViews = ({ transactions, categories, isDark = false }) => {
       .map(b => ({ ...b, revenus: Math.round(b.revenus * 100) / 100, depenses: Math.round(b.depenses * 100) / 100 }));
   }, [periodTxs, range, granularity]);
 
+  // Mois ayant au moins un mouvement (tableau « Mois par mois »)
+  const moisActifs = useMemo(() => seriesData.filter(b => b.revenus || b.depenses), [seriesData]);
+
   // ===== Distribution par catégorie =====
   const distributionFor = (txs) => {
     const totals = {};
@@ -2021,7 +2088,7 @@ const TimeViews = ({ transactions, categories, isDark = false }) => {
   // ===== Sélecteurs période =====
   const periodOptions = [
     { id: 'weeks', label: '4 semaines' },
-    { id: 'month', label: 'Ce mois' },
+    { id: 'month', label: 'Mois' },
     { id: 'quarter', label: '3 mois' },
     { id: 'year', label: '12 mois' },
     { id: 'all', label: 'Tout' },
@@ -2071,6 +2138,23 @@ const TimeViews = ({ transactions, categories, isDark = false }) => {
         <Seg label="Période" value={period} onChange={setPeriod} options={periodOptions} />
       </PageHeader>
 
+      {period === 'month' && (
+        <div className="f-month-nav">
+          <IconButton label="Mois précédent" onClick={() => stepMonth(-1)} disabled={monthIdx <= 0} className="f-month-btn">
+            <ChevronLeft size={18} />
+          </IconButton>
+          <Select value={monthKey} onChange={(e) => setMonthKey(e.target.value)} aria-label="Mois" className="f-month-sel">
+            {[...monthList].reverse().map(k => <option key={k} value={k}>{libelleMois(k)}</option>)}
+          </Select>
+          <IconButton label="Mois suivant" onClick={() => stepMonth(1)} disabled={monthIdx < 0 || monthIdx >= monthList.length - 1} className="f-month-btn">
+            <ChevronRight size={18} />
+          </IconButton>
+          {monthKey !== currentMonthKey && (
+            <Button variant="secondary" onClick={() => setMonthKey(currentMonthKey)} className="f-month-now">Mois en cours</Button>
+          )}
+        </div>
+      )}
+
       {period === 'custom' && (
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="f-num" style={{ width: 160 }} aria-label="Début" />
@@ -2086,14 +2170,14 @@ const TimeViews = ({ transactions, categories, isDark = false }) => {
           value={formatEUR(totalRevenus)}
           valueClass="t-pos"
           extra={rDelta !== null && <span className={`text-xs font-medium f-num ${rDelta >= 0 ? 't-pos' : 't-neg'}`}>{fmtPct(rDelta)}</span>}
-          sub={`${formatEUR(prevRevenus)} sur la période précédente`}
+          sub={`${formatEUR(prevRevenus)} ${prevLabel}`}
         />
         <Kpi
           label="Dépenses"
           marker={chartColors.dep}
           value={formatEUR(totalDepenses)}
           extra={dDelta !== null && <span className={`text-xs font-medium f-num ${dDelta <= 0 ? 't-pos' : 't-neg'}`}>{fmtPct(dDelta)}</span>}
-          sub={`${formatEUR(prevDepenses)} sur la période précédente`}
+          sub={`${formatEUR(prevDepenses)} ${prevLabel}`}
         />
         <Kpi
           label="Solde"
@@ -2139,6 +2223,31 @@ const TimeViews = ({ transactions, categories, isDark = false }) => {
           <div className="f-kpi" style={{ paddingTop: 12, paddingBottom: 12 }}><span className="text-xs t-muted">Nombre de revenus</span><span className="f-num text-[15px] font-semibold t-pos">{incomes.length}</span></div>
         </div>
       </Card>
+
+      {granularity === 'month' && moisActifs.length > 1 && (
+        <Card className="overflow-hidden">
+          <PanelHead title="Mois par mois" />
+          <div className="f-mm f-mm-h">
+            <span>Mois</span><span className="text-right">Revenus</span><span className="text-right">Dépenses</span><span className="text-right">Solde</span><span className="f-mm-chev" />
+          </div>
+          {[...moisActifs].reverse().map(b => {
+            const sol = Math.round((b.revenus - b.depenses) * 100) / 100;
+            const [yy, mm] = b.key.split('-').map(Number);
+            return (
+              <button key={b.key} type="button" className="f-mm f-row no-touch-grow" onClick={() => openMonth(b.key)} aria-label={`Analyser ${libelleMois(b.key)}`}>
+                <span className="font-medium t-ink truncate">
+                  <span className="f-mm-lg">{libelleMois(b.key)}</span>
+                  <span className="f-mm-sm">{MOIS_COURTS[mm - 1]} {yy}</span>
+                </span>
+                <span className={`f-num text-right ${b.revenus ? 't-pos' : 't-faint'}`}>{b.revenus ? formatEUR(b.revenus) : '—'}</span>
+                <span className={`f-num text-right ${b.depenses ? 't-ink' : 't-faint'}`}>{b.depenses ? formatEUR(b.depenses) : '—'}</span>
+                <span className={`f-num text-right font-medium ${sol < 0 ? 't-neg' : 't-ink'}`}>{sol >= 0 ? '+' : '−'}{formatEUR(Math.abs(sol))}</span>
+                <ChevronRight size={15} className="f-mm-chev t-faint" />
+              </button>
+            );
+          })}
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         <Card>
@@ -4971,7 +5080,8 @@ body, html { font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Seg
   display: flex; flex-direction: column; gap: 18px; padding: 16px 12px;
   background: var(--side); border-right: 1px solid var(--line);
 }
-.f-logo { width: 26px; height: 26px; border-radius: 7px; flex: none; display: inline-flex; align-items: center; justify-content: center; background: var(--primary); color: var(--on-primary); }
+.f-logo { flex: none; display: block; border-radius: 27%; }
+html.dark .f-logo { box-shadow: 0 0 0 1px var(--line); }
 .f-nav {
   display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 6px;
   background: transparent; color: var(--ink-3); font-weight: 500; text-align: left; transition: background-color .12s, color .12s;
@@ -4984,25 +5094,27 @@ body, html { font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Seg
 .f-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .f-main { flex: 1; min-width: 0; padding: 24px 32px 56px; }
 .f-topbar {
-  display: none; position: sticky; top: 0; z-index: 30; align-items: center; gap: 8px; min-height: 56px; padding: 6px 8px 6px 16px;
+  display: none; position: sticky; top: 0; z-index: 30; align-items: center; gap: 8px; min-height: 56px;
+  padding: calc(6px + env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) 6px max(16px, env(safe-area-inset-left, 0px));
   background: var(--bg); border-bottom: 1px solid var(--line);
 }
 .f-bottom {
-  display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; gap: 4px;
-  padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; gap: 0;
+  padding: 6px max(4px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(4px, env(safe-area-inset-left, 0px));
   background: var(--bg); border-top: 1px solid var(--line);
 }
 .f-tb {
-  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  height: 48px; border: 0; border-radius: 12px; background: transparent; color: var(--ink-3); font-size: 11px; font-weight: 500;
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  height: 60px; padding: 0; border: 0; border-radius: 14px; background: transparent; color: var(--ink-3);
+  font-size: clamp(8.5px, 2.6vw, 12px); font-weight: 500; letter-spacing: -0.02em; line-height: 1.1;
 }
 .f-tb.on { background: var(--primary); color: var(--on-primary); }
-.f-tb span { display: none; }
-@media (min-width: 640px) { .f-tb { height: 54px; } .f-tb span { display: block; } }
+.f-tb span { display: none; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: clip; }
+@media (min-width: 640px) { .f-tb { height: 64px; } .f-tb span { display: block; } }
 @media (max-width: 1023px) {
   .f-side { display: none; }
   .f-topbar, .f-bottom { display: flex; }
-  .f-main { padding: 16px 16px calc(96px + env(safe-area-inset-bottom, 0px)); }
+  .f-main { padding: 16px max(16px, env(safe-area-inset-right, 0px)) calc(112px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
 }
 .f-ibtn-lg { width: 40px; height: 40px; border-radius: 10px; }
 .f-add { background: var(--primary); color: var(--on-primary); }
@@ -5173,6 +5285,36 @@ code.f-code { font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; fon
 /* Grilles de lignes */
 .f-top { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 48px; padding: 6px 16px; }
 .f-top + .f-top { border-top: 1px solid var(--line-soft); }
+
+/* Analyses : navigation mois par mois */
+.f-month-nav { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.f-month-nav .f-month-btn { width: 34px; height: 34px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.f-month-nav .f-month-btn:disabled { opacity: .35; cursor: default; }
+.f-month-nav .f-month-sel { width: 190px; font-weight: 600; }
+@media (max-width: 639px) {
+  .f-month-nav { justify-content: stretch; }
+  .f-month-nav .f-month-sel { flex: 1 1 auto; width: auto; min-width: 0; }
+  .f-month-nav .f-month-btn { width: 42px; height: 42px; }
+}
+.f-mm {
+  display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, minmax(88px, auto)) 16px; align-items: center; column-gap: 16px;
+  width: 100%; min-height: 44px; padding: 6px 16px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left;
+}
+.f-mm + .f-mm { border-top: 1px solid var(--line-soft); }
+.f-mm-h { min-height: 34px; font-size: 12px; color: var(--muted); background: var(--surface-2); }
+.f-mm-sm { display: none; }
+@media (max-width: 639px) {
+  .f-mm { grid-template-columns: minmax(0, 1fr) repeat(3, auto); column-gap: 10px; padding: 8px 12px; font-size: 12px; min-height: 46px; }
+  .f-mm-chev { display: none; }
+  .f-mm-lg { display: none; }
+  .f-mm-sm { display: inline; }
+}
+
+/* Mobile : pas d'effet élastique, pas de zoom, pas de débordement horizontal */
+html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+.f-app { overflow-x: clip; }
+html[data-touch="1"], html[data-touch="1"] body, html[data-touch="1"] .f-app * { touch-action: pan-x pan-y; }
+html[data-touch="1"] .f-app * { -webkit-tap-highlight-color: transparent; }
 @media (min-width: 640px) { .f-top { grid-template-columns: 20px minmax(0, 1fr) auto 112px; } }
 .f-dayrow { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; align-items: center; column-gap: 12px; padding: 10px 20px; }
 .f-pickrow { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 10px 14px; cursor: pointer; }
@@ -5278,6 +5420,40 @@ html[data-touch="1"] .fixed.inset-0.z-50:has(> .f-modal:not(.max-w-md)) { paddin
 html[data-touch="1"] .opacity-0.group-hover\\:opacity-100 { opacity: 0.7 !important; }
 `;
 function AppInner() {
+  // Mobile : viewport fixe (pas de zoom), jusqu'aux bords de l'écran
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    let meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.setAttribute('name', 'viewport');
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover');
+    if (!document.querySelector('link[rel~="icon"]')) {
+      const icon = document.createElement('link');
+      icon.setAttribute('rel', 'icon');
+      icon.setAttribute('type', 'image/svg+xml');
+      icon.setAttribute('href', 'data:image/svg+xml,' + encodeURIComponent(LOGO_SVG));
+      document.head.appendChild(icon);
+    }
+    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    if (!coarse) return undefined;
+    // Safari iOS ignore user-scalable=no : on bloque le pincement directement
+    const stopGesture = (e) => e.preventDefault();
+    const stopPinch = (e) => { if (e.touches && e.touches.length > 1) e.preventDefault(); };
+    document.addEventListener('gesturestart', stopGesture, { passive: false });
+    document.addEventListener('gesturechange', stopGesture, { passive: false });
+    document.addEventListener('gestureend', stopGesture, { passive: false });
+    document.addEventListener('touchmove', stopPinch, { passive: false });
+    return () => {
+      document.removeEventListener('gesturestart', stopGesture);
+      document.removeEventListener('gesturechange', stopGesture);
+      document.removeEventListener('gestureend', stopGesture);
+      document.removeEventListener('touchmove', stopPinch);
+    };
+  }, []);
+
   // ===== Gist : récupération initiale du token et de l'id (localStorage avec fallback) =====
   const safeLocalStorage = useMemo(() => {
     try {
@@ -5939,7 +6115,7 @@ function AppInner() {
           {/* Barre latérale (ordinateur) */}
           <aside className="f-side" aria-label="Navigation principale">
             <div className="flex items-center gap-2.5 px-2 py-1">
-              <span className="f-logo"><Wallet size={14} /></span>
+              <LogoMark size={26} />
               <span className="text-[14px] font-semibold t-ink">Finances</span>
             </div>
 
@@ -6003,7 +6179,7 @@ function AppInner() {
           <div className="flex-1 min-w-0 flex flex-col">
             {/* Barre du haut (mobile et tablette) */}
             <header className="f-topbar">
-              <span className="f-logo"><Wallet size={14} /></span>
+              <LogoMark size={28} />
               <span className="text-[15px] font-semibold t-ink">Finances</span>
               <div className="ml-auto flex items-center gap-0.5">
                 {isGistConnected && (
@@ -6052,7 +6228,7 @@ function AppInner() {
                 aria-current={isActive ? 'page' : undefined}
                 className={`f-tb no-touch-grow ${isActive ? 'on' : ''}`}
               >
-                <Icon size={20} strokeWidth={isActive ? 2.1 : 1.8} />
+                <Icon size={25} strokeWidth={isActive ? 2.1 : 1.8} />
                 <span>{item.label}</span>
               </button>
             );
